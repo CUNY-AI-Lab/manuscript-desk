@@ -1,0 +1,19 @@
+# Dependencies and build output
+node_modules/
+dist/
+web/vendor/
+
+# Wrangler and local secrets
+.wrangler/
+.dev.vars
+.env
+.env.*
+
+# Editors, OS and AI tools
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+.claude/
+.superpowers/
