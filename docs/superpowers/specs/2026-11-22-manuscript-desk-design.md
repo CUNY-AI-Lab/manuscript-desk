@@ -312,8 +312,8 @@ Without a model call the tool still works as book-index does today; the model
 steps are additions, and each can be skipped.
 
 The public book-index on stefanomorello.com is unchanged. Its matching code is
-copied into this suite with its tests (both are GPL-3.0; MuPDF.js is AGPL-3.0,
-so this repository stays public with complete source).
+copied into this suite with its tests (book-index is GPL-3.0, which may be combined into an AGPL-3.0 work; MuPDF.js
+is AGPL-3.0, so this repository is AGPL-3.0 and public with complete source).
 
 ## How it is built
 
@@ -352,12 +352,19 @@ model; quota is shown from `/api/quota` and is display only.
 Cost target (my call): a 100,000-word monograph reviewed on the default
 passage model for under $5, a tenth of the current $50 per 30 days personal
 limit. To hold that, each passage is sent once, carrying all the model rules
-relevant to it, not once per rule or category. The catalog has no price or
-strength field, so defaults follow the catalog's own `tier` and `order`:
-extraction and reference parsing use the first recommended row of the top
-tier, passage review the first recommended row of the next tier down, and the
-builder confirms both against the live catalog and a measured run on a sample
-chapter before fixing them.
+relevant to it, not once per rule or category. The live catalog (read 2026-11-22) prices
+its recommended text models between $0.10 and $1.40 per million input tokens,
+so a monograph costs roughly $0.20 on GPT OSS 120B and about $1 on the most
+expensive row; cost does not constrain the choice.
+
+Default for every step: `gpt-oss-120b` (Stefano asked for a recommendation;
+this is Fable's). It is one of two recommended rows that advertise
+`structured-output`, which lets the Gateway hold replies to the findings and
+rule schemas, and it is the cheaper of the two. `mistral-large-3-675b-instruct`
+is the other. The generality set is run across all recommended text rows
+before release, and the extraction default changes if another model reads
+guidelines measurably better. The menu still follows the catalog; the default
+falls back to the first offered row if `gpt-oss-120b` leaves it.
 
 **Failure handling.** A passage that fails is retried only when the Gateway
 says to, then marked failed; the job continues, and the summary lists failed
@@ -438,7 +445,7 @@ Fable writes the implementation plan; Opus agents implement it.
 - Input with unresolved tracked changes is refused.
 - Text inside live fields is never edited.
 - Baselines are small (checker rules only) and spot-checked by Stefano.
-- Cost target of under $5 per monograph; default models by catalog tier.
+- Cost target of under $5 per monograph; default model `gpt-oss-120b`.
 - Generality pass bar of 90 percent; real guidelines and manuscripts stay out
   of the repository.
 - Unfinished work is kept in the browser for up to 24 hours so a sign-in
@@ -446,10 +453,9 @@ Fable writes the implementation plan; Opus agents implement it.
 
 ## Open, for Stefano
 
-- **Repository owner and license.** The Bibliography Converter lives under
-  `smorello87` and is GPL-3.0. The MuPDF dependency requires AGPL-compatible
-  terms and public source either way. Draft assumption: `smorello87/manuscript-desk`,
-  GPL-3.0, public.
+- **Repository owner.** License is settled: AGPL-3.0, as the Lab's other
+  public tools use, which also matches MuPDF.js. Draft assumption for the
+  owner: `CUNY-AI-Lab/manuscript-desk`, public.
 - **The generality set.** Which eight or more guideline documents.
 
 ## Left to the builder
