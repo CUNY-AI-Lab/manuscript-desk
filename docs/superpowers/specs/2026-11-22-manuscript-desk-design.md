@@ -211,6 +211,37 @@ If the input already contains unresolved tracked changes, the tool stops and
 asks the author to accept or reject them in Word first (my call: mixing two
 authors' revisions makes the result unreadable).
 
+### Paragraph roles and structure
+
+The Brill job this tool grew out of (an eleven-chapter edited volume exported
+from Google Docs) showed that most of the work is structural, not
+sentence-level: the source carries direct formatting and no styles, and the
+publisher's requirements are about what each paragraph *is*.
+
+So before any checker runs, a model labels every paragraph with a role: title
+block, epigraph, abstract, keywords, heading (with level), block quotation,
+verse, figure or caption, list item, table, bibliography heading, bibliography
+entry, or body text. It sees each paragraph's text (long ones shortened) and
+its direct formatting (alignment, indent, bold, italic, size). Code then
+applies the structure the rule sheet asks for:
+
+- named paragraph styles in place of direct formatting, as tracked style
+  changes;
+- heading numbering and capitalization;
+- block quotations and verse set off, surrounding quotation marks flagged;
+- one Word section per chapter where notes must restart at 1;
+- front and back matter checked against the required order, missing parts
+  added as To-dos;
+- figure numbering, placement markers and the list of illustrations.
+
+Roles are shown to the author for correction before anything is applied; a
+wrong role is the most damaging kind of error this tool can make.
+
+Companion documents the guidelines ask for are produced as separate files,
+filled from the manuscript where the content exists and left as templates
+where it does not: abstracts and keywords per chapter, running titles, alt
+texts, and the checklist of what is still owed.
+
 ### Finding problems
 
 Two kinds of checker, both producing the same *finding* record
@@ -357,14 +388,30 @@ its recommended text models between $0.10 and $1.40 per million input tokens,
 so a monograph costs roughly $0.20 on GPT OSS 120B and about $1 on the most
 expensive row; cost does not constrain the choice.
 
-Default for every step: `gpt-oss-120b` (Stefano asked for a recommendation;
-this is Fable's). It is one of two recommended rows that advertise
-`structured-output`, which lets the Gateway hold replies to the findings and
-rule schemas, and it is the cheaper of the two. `mistral-large-3-675b-instruct`
-is the other. The generality set is run across all recommended text rows
-before release, and the extraction default changes if another model reads
-guidelines measurably better. The menu still follows the catalog; the default
-falls back to the first offered row if `gpt-oss-120b` leaves it.
+Defaults, from a first comparison of nine Gateway models on 2026-11-22 (one
+run each, so indicative): the real Brill author guide and editor's note, three
+chapters of a real edited volume whose paragraph roles had been set by hand,
+and a passage with 18 planted style errors.
+
+- **Reading guidelines and labelling paragraph roles: `glm-5.3`.** It found
+  19 of 20 known Brill requirements with 46 of 58 quotations verbatim, and
+  labelled 226 of 240 paragraphs correctly in the hardest chapter. `kimi-k3`
+  was marginally better (20 of 20) at about two and a half times the price
+  and sits in the advanced tier. `gpt-oss-120b`, the earlier draft default,
+  was clearly worse (16 of 20, a third of its quotations not verbatim, 167 of
+  240 roles).
+- **Reviewing passages: a reasoning model with thinking left on.** With
+  thinking on, `inkling-2-small`, `deepseek-v4.1-flash-1017` and `kimi-k3`
+  each found 18 of 18 planted errors with no false alarms; with the
+  low-effort settings the Bibliography Converter uses, the best recommended
+  model found 14. Thinking matters more than the model here. Draft default
+  `inkling-2-small` with thinking on (about half a cent per passage, roughly
+  $1.20 for a monograph); `glm-5.3` with thinking on returned empty replies
+  in this test and needs its own settings worked out before it is judged.
+
+These are confirmed or replaced by the generality set before release. The
+menu still follows the catalog; a default falls back to the first offered row
+if its model leaves the menu.
 
 **Failure handling.** A passage that fails is retried only when the Gateway
 says to, then marked failed; the job continues, and the summary lists failed
@@ -418,9 +465,10 @@ Each step ends with something usable.
    release verifier, CI. Copied in shape from the Bibliography Converter.
 2. Rule sheet: schema, baselines, extraction, quotation check, review screen,
    download and upload.
-3. Report (approach C): `.docx` reader, code checkers, model checkers,
-   finding guards, findings and To-dos shown in the app.
-4. Marked-up file: the `.docx` writer, comments, To-dos document.
+3. Report (approach C): `.docx` reader, paragraph roles, code checkers, model
+   checkers, finding guards, findings and To-dos shown in the app.
+4. Marked-up file: the `.docx` writer (styles, structure, revisions,
+   comments), To-dos document, companion documents.
 5. References through CSL.
 6. Edited collections: several files, cross-chapter pass.
 7. Index Builder, stage 2 first (the port of book-index with the model
@@ -445,7 +493,7 @@ Fable writes the implementation plan; Opus agents implement it.
 - Input with unresolved tracked changes is refused.
 - Text inside live fields is never edited.
 - Baselines are small (checker rules only) and spot-checked by Stefano.
-- Cost target of under $5 per monograph; default model `gpt-oss-120b`.
+- Cost target of under $5 per monograph; default models `glm-5.3` (guidelines, roles) and `inkling-2-small` with thinking on (passage review).
 - Generality pass bar of 90 percent; real guidelines and manuscripts stay out
   of the repository.
 - Unfinished work is kept in the browser for up to 24 hours so a sign-in

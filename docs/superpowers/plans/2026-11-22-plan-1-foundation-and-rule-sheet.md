@@ -22,7 +22,7 @@
 - The Worker stores nothing and logs no request bodies, prompts, guideline text or identifiers.
 - No retries in the Worker. The browser retries a call only when the response header `x-should-retry` is `true`, at most once.
 - Model output and guideline text are rendered with `textContent`, never `innerHTML`.
-- Default model id `gpt-oss-120b`; if the menu does not offer it, the first offered row.
+- Default model id `glm-5.3`; if the menu does not offer it, the first offered row.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push, create a remote, or deploy.
 - Real publisher guidelines and manuscripts are never committed. Test fixtures are text written for the tests.
 
@@ -478,7 +478,7 @@ export function createApi({ fetchImpl = fetch, navigate = url => location.assign
 // invalid_credential or session_invalid: await onLostSession() if given, then navigate(error.launch) and never settle.
 // web/shared/models.js
 export function modelMenu(catalog) -> { id, label }[];        // recommended, active, text-generation, context_length >= 32000, not a classifier, by order
-export function chooseModel(chosen, menu) -> string;          // chosen if offered, else 'gpt-oss-120b' if offered, else menu[0].id
+export function chooseModel(chosen, menu) -> string;          // chosen if offered, else 'glm-5.3' if offered, else menu[0].id
 // web/shared/store.js
 export function createStore({ indexedDB, now = Date.now }) -> { saveJob(key, value), loadJob(key), clearJob(key) };
 // loadJob returns null and deletes the record when it is older than 24 hours.
@@ -510,9 +510,9 @@ test('post sends JSON with content-type application/json', ...)
 // tests/models.test.mjs — fixture: copy tests/fixtures/catalog-2026-11-09.json from the pattern
 test('offers only recommended active text rows with enough context, in catalog order', ...)
 test('excludes rows whose id or name matches guard|safeguard', ...)
-test('chooseModel prefers gpt-oss-120b when nothing is chosen', ...)
+test('chooseModel prefers glm-5.3 when nothing is chosen', ...)
 test('chooseModel keeps a chosen model that is still offered', ...)
-test('chooseModel falls back to the first row when gpt-oss-120b is not offered', ...)
+test('chooseModel falls back to the first row when glm-5.3 is not offered', ...)
 // tests/store.test.mjs
 test('saves and loads a job', ...)
 test('returns null and deletes a job older than 24 hours', ...)
@@ -558,7 +558,7 @@ test('htmlToText drops script, style and navigation and keeps paragraph text', .
 
 - [ ] **Step 2: Run** `node --test tests/generality.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement** `scripts/generality.mjs` (export the pure functions; run the CLI only when invoked directly) and the `generality` npm script.
-- [ ] **Step 4: Run** `npm run check`. Expected: PASS. Then `CAIL_API_KEY= npm run generality -- --models gpt-oss-120b` prints the missing-key message and exits non-zero.
+- [ ] **Step 4: Run** `npm run check`. Expected: PASS. Then `CAIL_API_KEY= npm run generality -- --models glm-5.3` prints the missing-key message and exits non-zero.
 - [ ] **Step 5: Commit** `Add the generality script for measuring rule extraction`.
 
 ---
