@@ -1,8 +1,8 @@
 // The model menu, built from the CAIL catalog (GET /manuscript/api/catalog). Pure, so it is tested
 // without a DOM. Only Gateway-recommended, active text-generation rows with room for a part of the
 // guidelines plus the reply are offered, in catalog order.
-export const DEFAULT_MODEL = 'glm-5.3';
-// A part of the guidelines is up to about 42,000 characters (some 10,000 tokens) and the reply up to
+export const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
+// A part of the guidelines is at most 40,000 characters (some 10,000 tokens) and the reply up to
 // 6,000 tokens; 32,000 tokens of context holds both.
 export const MIN_CONTEXT_TOKENS = 32000;
 // Safety classifiers answer "safe" or "unsafe", not rules, even when tagged text-generation.
