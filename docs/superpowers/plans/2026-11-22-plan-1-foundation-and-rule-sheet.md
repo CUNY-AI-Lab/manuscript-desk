@@ -571,3 +571,24 @@ test('htmlToText drops script, style and navigation and keeps paragraph text', .
 ## Executed
 
 Completed 2026-11-22 on branch `plan-1-foundation`. Changes made during execution, each reviewed: Task 11 added (PDF text extraction keeps the spaces between words); the quotation check requires whole-word matches; slot-less duplicate removal narrowed to same category, mode and quotation; the page's sign-in-free dev run (Task 9 Step 5) replaced by a browser smoke test with mocked API; six whole-branch review findings fixed (loaded sheets marked unverified, named manual verified, settings shown on rows, failed re-read keeps the sheet, failure reasons shown and saved, trailing-slash redirect).
+
+### Known follow-ups, judged safe to leave by the whole-branch review
+
+Before deployment:
+- Restore the once-per-page sign-in guard the Bibliography Converter has, so a persistently invalid session cannot bounce the page.
+- Saved work is deleted after 24 hours only when the page is next opened; settle this before manuscript findings are stored the same way.
+
+For plan 2 (report and checkers):
+- The rule sheet file has no field recording whether a quotation was verified; the To-dos document will need one.
+- A conflict can only be resolved by deleting a rival rule; add "keep both" (for example double-spaced text with single-spaced block quotations).
+- `mergeRetry` in `web/format/app.js` repeats the duplicate rules of `lib/rules/merge.js`; make it one definition.
+- `findQuote` normalizes the whole document for every candidate; normalize once per document.
+- A saved sheet that no longer validates is dropped silently; handle it before the sheet format changes.
+- `layerSheet` throws on a null entry; `min` greater than `max` is not rejected in settings.
+- A candidate with a verified quotation that fails only on its setting is dropped; it could be kept as a comment-only rule.
+
+Smaller:
+- Letter-spaced headings in a PDF (wider than a tenth of the font size) come out as separate letters.
+- No visible "Reading file…" indicator while the PDF reader loads; rows do not name their source document when there are several.
+- The PDF worker has no timeout; any zip file is treated as a Word file.
+- The slot and category tables are not pinned by a table-driven test; `/api/catalog` has no direct test; `miniflare` is imported but only installed through wrangler; wrangler's pinned version has dev-only audit advisories.
