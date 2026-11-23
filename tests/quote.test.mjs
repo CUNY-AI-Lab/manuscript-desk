@@ -42,6 +42,17 @@ test('strips surrounding quotation marks and terminal punctuation from a segment
   assert.equal(findQuote('"Use en dashes - not hyphens - in ranges;"', G), true);
 });
 
+test('strips leading punctuation from a segment after an elision', () => {
+  assert.equal(findQuote('Please use double quotation marks … , numbered from 1 in each chapter', G), true);
+  assert.equal(findQuote('Please use double quotation marks …; numbered from 1 in each chapter', G), true);
+});
+
+test('accepts a four-dot ellipsis', () => {
+  // The guidelines have no period before "not hyphens", so the stray one must be stripped.
+  assert.equal(findQuote('numbered from 1 in each chapter. ... not hyphens - in ranges', G), true);
+  assert.equal(findQuote('numbered from 1 in each chapter.... not hyphens - in ranges', G), true);
+});
+
 test('applies the 12-character minimum after stripping', () => {
   // "use en dashes" is 13 characters; "in ranges" is 9 once the period and quotes are gone.
   assert.equal(findQuote('use en dashes ... "in ranges."', G), false);
@@ -53,12 +64,15 @@ test('finds a later occurrence of the first segment when the earliest is too far
 });
 
 test('normalizeForMatch handles soft hyphens, line-break hyphens, quotes, primes, dashes and space', () => {
-  assert.equal(normalizeForMatch('foot­notes'), 'footnotes');
+  assert.equal(normalizeForMatch('foot\u00ADnotes'), 'footnotes');
   assert.equal(normalizeForMatch('foot-  \n  notes'), 'footnotes');
   assert.equal(normalizeForMatch('Anglo-\nSaxon'), 'anglo- saxon');
+  assert.equal(normalizeForMatch('foot\u2010\nnotes'), 'footnotes');
+  assert.equal(normalizeForMatch('foot\u2011 \n notes'), 'footnotes');
+  assert.equal(normalizeForMatch('Anglo\u2010\nSaxon'), 'anglo- saxon');
   assert.equal(normalizeForMatch('‘a’ “b” 5′ 6″'), '\'a\' "b" 5\' 6\'\'');
-  assert.equal(normalizeForMatch('a‐b–c—d−e'), 'a-b-c-d-e');
-  assert.equal(normalizeForMatch('  One \t two\n\nTHREE  '), 'one two three');
+  assert.equal(normalizeForMatch('a\u2010b–c—d\u2212e'), 'a-b-c-d-e');
+  assert.equal(normalizeForMatch('  One\u00A0\t two\n\nTHREE  '), 'one two three');
   assert.equal(normalizeForMatch('ﬁgure'), 'figure');
 });
 
