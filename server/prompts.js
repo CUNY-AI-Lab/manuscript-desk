@@ -1,9 +1,9 @@
 // The system prompt for reading one group of rule categories out of a publisher's guidelines. It is
 // built from the schema tables at call time, so the categories, slots and allowed values it lists
 // are always the ones validateRule accepts.
-import { CATEGORIES, DOC_TYPES, SLOTS, categoriesFor } from '../lib/rules/schema.js';
+import { DOC_TYPES, GROUPS, SLOTS, categoriesFor } from '../lib/rules/schema.js';
 
-export const GROUPS = Object.freeze([...new Set(CATEGORIES.map(entry => entry.group))]);
+export { GROUPS };
 
 const DOC_TYPE_NAMES = { article: 'a journal article', monograph: 'a monograph', 'edited-collection': 'an edited collection' };
 const SHAPE = '{"rules":[{"category","slot","statement","quote","mode","params"}],"manual":{"named": string|null}}';
