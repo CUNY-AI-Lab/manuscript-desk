@@ -17,14 +17,21 @@ named, then what no person has checked and what is not built. The rounds below h
 | Guideline reading, 18 publishers' guidelines | 421 of 438 expected requirements (96.1%), lowest case 88.9%, PASS (round 6: 424, lowest 70.0%, FAIL) | 7 |
 | Settings stability, Brill guidelines | 18 settings filled in all of five runs (5 before round 4); 19 in round 6's 18-case run, 21 in its page run | 5, 6 |
 | Paragraph roles, structural | dev 98.0%, holdout 99.0% (run once), front matter 57 of 57 | 6 |
-| Style agreement with the hand-formatted file | gold roles, hand sheet: dev 100.0%, holdout 98.9%; the page's own labels and sheet: 98.7% over the book | 6 |
+| Style agreement with the hand-formatted file | gold roles, hand sheet: dev 100.0%, holdout 98.9%; the page's own labels and sheet: 98.7% over the book. Style names only: not how the file looks (next row) | 6, 8 |
+| How the file looks against the hand-formatted file (`render-eval`, gold roles, hand sheet, 1,359 matched paragraphs) | font 100% (98.4% before round 8), size 98.7%, space before 97.0% and after 96.2%, indents 95.0 to 97.2%, first-line indent 73.5%, alignment 98.8%, line spacing 0% (the manuscript's double spacing is kept: the guidelines set none, the hand job chose 1.5); no Latin text outside the body font (6,834 characters before); page setup agrees in 0 of 12 chapters (margins and page-number position are the hand job's choices). Word: 241 pages against 224 | 8 |
 | Comments of the manual job found | structure 21 of 26, reading 7 of 12 strictly (8 by the script), human 0 of 1 (not imitated, by design) | 6, 7 |
 | Calls and rough cost for this book | about 14 calls to read the guidelines, 85 to label 1,460 paragraphs, 13 to 15 for the reading check, 1 for running titles: about 115 calls and $0.50 to $0.60 by the Gateway's estimate | 4, 6, 7 |
 
+A correction to rounds 2 to 7: "style agreement" (99%) counted whether each paragraph got the
+style name the hand job gave it. It said nothing about what those styles look like, direct
+formatting left in runs, page setup, headers and footers or fonts. Opened side by side in Word,
+the tool's file was visibly less finished; since round 8, `render-eval` measures what a reader sees.
+
 Never checked by a person:
 
-- The formatted file opened in Microsoft Word. Every file passes the structural validator, and
-  LibreOffice converted it to PDF (round 2); nobody has opened one in Word and accepted or rejected its changes.
+- Accepting or rejecting the formatted file's tracked changes in Word. Word opened the formatted
+  file and exported it to PDF without a repair prompt (the stakeholder before round 8, the agent in
+  round 8); its changes have not been reviewed one by one.
 - The review step (step 5) used by a scholar on a real manuscript, including its front-matter group.
 - The reading check's extra queries judged by someone other than the agent that built the check
   (they are "real on my reading" in rounds 5 and 6, a judgment by that agent).
@@ -42,8 +49,10 @@ Not built (checked against the design and the code, round 7):
 - Deletion of the saved work after 24 hours happens only when the page is next opened (the plan's
   follow-up before deployment); the design's deletion on download is not built (the page clears on
   Start over).
-- Chapter labels: a label line already in a title block is styled, but none is added where the
-  source has none (12 in this job).
+- Chapter labels are added only when the rule sheet sets `chapters.label` (round 8); these
+  guidelines do not, so none is added in this job (the hand job added 12).
+- A rebuilt contents list: the typed list is kept and compared with the chapters; none is built
+  with page numbers. Front matter is not put in the order the editor's note lists.
 - Tables from tabbed lines: such lines get the table style and a To-do asking the author to make a
   Word table; no table is built.
 - A second manuscript, ideally one whose source uses styles: everything here is measured on one book.
@@ -1245,3 +1254,150 @@ Spent in this round: $0.46 at catalog prices: the 18-case run ($0.428) and the t
 calls and counts cached input cheaper). Every answer is
 recorded in the case's private `work/` folder (`generality-r7/`, `reading-answers.json`).
 
+
+## Round 8: how the file looks
+
+Rounds 1 to 7 scored the formatted file against the hand-formatted reference by style name per
+paragraph (99%). Nobody had compared how the two files look. The stakeholder opened both in Word,
+exported PDFs and listed eleven differences from about six pages each. This round measures
+appearance, closes the gaps the rule sheet or general tidiness justify, and records the rest.
+No model was called.
+
+### A. The rendered comparison
+
+`scripts/render-eval.mjs` with `lib/docx/appearance.js` (see the README) resolves each paragraph's
+effective formatting through the document defaults and theme fonts, the style chain, numbering and
+direct formatting, matches the two files' paragraphs by text, and reports agreement per property
+(dev, holdout and front matter apart; a paragraph's chapter comes from the source paragraph it came
+from), difference classes with counts, the notes, each file's sections (page, margins, note
+numbering, page-number position on a section's first and other pages, and its font), the Latin text
+set in a font other than the body's, and, from PDFs, page counts and characters per font (MuPDF).
+Six tests on an invented package. Its first run, on round 6's page output, gave the scale of each
+difference:
+
+| Difference (round 6's page output against the reference) | Count |
+|---|---|
+| Body line spacing 2 against 1.5 | 473 paragraphs |
+| Other styles single-spaced against 1.15 or 1.25 (bibliography, verse, quotations, headings, title blocks) | about 860 paragraphs |
+| First-line indent of the body 0.75 cm against 1 cm | 326 paragraphs |
+| Latin text in a font other than the body's | 3,704 characters in the text, 3,130 in the notes |
+| Page number top right in the defaults' sans-serif font at 10 pt, missing on the first page of 8 of 14 sections, against bottom centre in the body font | every section |
+| Margins: three page setups in one file against one | 13 of 14 sections differ |
+| Word pages | 240 against 224 |
+
+Where the stray fonts came from: not the theme. The source (a word processor's export) set fonts on
+runs: Latin text in an East Asian font in one chapter and its notes (85 runs, with an East Asian hint
+that also took the quotation marks), two sans-serif fonts (about 210 runs, many of them empty lines
+in notes), Aptos (14 runs in notes) and two more; and its document defaults name a sans-serif font,
+which the headers' page number used.
+
+### B. The gaps, and what was done
+
+Classes as the brief defines them: (a) a rule-sheet setting, (b) a tidy-up right for any publisher,
+(c) consistency within the manuscript, (d) a choice of the hand job that no rule supports. The
+publisher's author guide and the editor's note were searched for line spacing, page numbers,
+margins, fonts, chapter labels and contents: the guide's checklist asks for a contents list that
+gives the order of the chapters, and for Unicode fonts; neither document says anything of line
+spacing, page-number position, margins or chapter labels. No cached extracted sheet sets those
+either. The hand sheet was not changed.
+
+| # | Gap | Class | What was done | Before -> after (gold roles, hand sheet) |
+|---|---|---|---|---|
+| 1 | Body line spacing | (a), unset for this publisher; the 1.5 is (d) | `layout.spacing` was already applied when set; unset here, so the manuscript keeps its double spacing, and the summary comment now says which layout the sheet leaves to the source | line-spacing agreement 0% -> 0% |
+| 2 | Page numbers | (a) new slot `layout.page-numbers`, unset here; (b) for the rest | With the slot set, every section shows the number where it says (headers and footers that hold other text are left to the author). Unset: the source's top-right numbers stay, but sections the formatter adds at chapter starts no longer copy a different first page that hid the number (5 sections), and the number takes the body font | position agrees in 0/12 chapters -> 0/12; first pages without a number 8 sections -> 3 (the source's own) |
+| 3 | Chapter label | (a) new slot `chapters.label`, unset here; the reference's labels are (d) | A numbered chapter without a label gets one in the example's form when the slot is set; none added here | unmatched label lines 12 -> 12 |
+| 4 | Brackets around an affiliation | (b) | Removed as tracked deletions | 12 lines, 24 deletions |
+| 5 | Two authors on one line | (c), ambiguous | The reference keeps both names on one line too; what it changed is the word between them. The four multi-author lines join names three different ways (a comma twice, "and" once, an ampersand once), with no majority, so a new check (on a consistency rule) comments on each instead of changing them. One name per line is the book's title page (item 6) | 4 comments, counted as extra places by `todos-eval` |
+| 6 | The book's title page | (b) | The title's final colon goes; a subtitle broken over two lines is joined; an "Edited by" line is read as a label; each "Name, Institution" line is split into an author and an affiliation line | front-matter paragraphs matched by text 8 -> 13 |
+| 7 | Contents list | (a), a requirement of the guide | Not rebuilt: the typed list is kept and round 6's check compares it with the chapters. A list with page numbers needs Word's layout (a TOC field, or page numbers from a render) | unchanged |
+| 8 | Bibliography heading typed with two different capitalizations (8 and 4) | (c), with a rule | A heading repeated in every chapter with different capitals is made like the variant that follows the sheet's heading case (title case here), else like most of them; with neither, the author is asked | 8 headings changed, tracked |
+| 9 | Quotation marks around title and subtitle together | (b) | An opening mark at the start of the title and its closing mark at the end of the last subtitle go; a title holding its own quotation keeps its marks (a colon inside its closing mark goes, as a colon before a subtitle) | 1 title block |
+| 10 | A heading starting with a line break | (b) | Spaces and line breaks at the ends of headings and title lines go, tracked | 16 places; the heading's number back on its line |
+| 11 | Aptos and other stray fonts | (b) | Direct Latin fonts other than the body's are removed from runs in the text, notes, headers and footers (symbol, code, other-script and East Asian fonts stay; an East Asian hint goes from runs without East Asian text); the document defaults take the body font | 329 runs; Latin text outside the body font 6,834 -> 0 characters; font agreement 98.4% -> 100% (notes 97.9% -> 100%); in Word's PDF, Aptos and the stray sans-serif and serif fonts are gone, the East Asian font remains only on full-width East Asian punctuation |
+
+Found beyond the list, by paging through both PDFs (front matter, chapter openings, block
+quotations, verse, the figures, the table, bibliographies, footnotes, the last pages):
+
+| Gap | Class | What was done |
+|---|---|---|
+| One chapter types each note's number next to Word's automatic one, so it prints twice, in the text and in the note (63 each) | (b) | A superscript run of digits right after a note mark goes, tracked; a space stays after the mark in a note. The reference removed them in the notes only, so its text still prints them twice |
+| A subtitle divided from its title at a colon keeps its lower-case first letter | (b) | Capitalized, tracked (1) |
+| A subtitle ends with a full stop | (b) | Removed, tracked (1) |
+| Three page setups in one file | (c) | Sections take the page size and margins of most of the text (by paragraphs), unless landscape or set by a margins rule: 6 sections. The reference's 2.54 cm margins are (d) |
+| Front matter in the source's order (abbreviations and notes on contributors after the introduction), against the order the editor's note lists | (a) | Not done: no rule or check orders front matter yet |
+| One chapter title in sentence case, one in capitals | (a) for section headings only; (d) for chapter titles | The existing check comments on the title in capitals; titles were not retyped |
+| The tool's own style values (first-line indent 0.75 cm, block quotations indented both sides, single spacing outside the body) differ from the reference's | (d) both ways | Not changed: neither comes from a rule |
+| The old contents list's heading typed in capitals | (c) | Not done |
+
+What the hand job chose that was not copied, and why: 1.5 line spacing, 2.54 cm margins and page
+numbers at the bottom centre (no rule states them; the manuscript's own are kept and the summary
+says so); chapter and introduction label lines and part title pages (no rule asks for labels; the
+slot is there for guidelines that do); a rebuilt contents list with page numbers (needs layout; the
+requirement is checked, not built); front matter reordered; "and" between two authors (no majority
+in the manuscript, so flagged); chapter titles retyped in title case (the rule is for section
+headings); and the hand job's style values (12 pt on Normal, 1 cm indent, 1.15 spacing for the
+bibliography and verse).
+
+### C. Measured after
+
+`format-eval` (gold roles, hand sheet, all chapters): matched 1,353 of 1,383 (dev 629, holdout 724),
+style agreement 99.4% (dev 100.0%, holdout 98.9%), title block 46/46, all unchanged; near matches 14
+-> 55, because the typed note numbers are gone from the text while the reference still prints them;
+tracked changes 45 -> 175; no undeclared word change, and rejecting every change gives the source's
+words; valid. With round 6's page labels and sheet: 1,346 matched, 98.7%, unchanged.
+
+`todos-eval` (gold roles, hand sheet, no reading check): structure 21/26 and reading 3/12, unchanged;
+extra places 27 -> 31, the four comments on the author lines (item 5).
+
+`render-eval`, before and after (matched paragraphs; agreement per property):
+
+| Configuration | Pairs | font | size | line | before | after | left | right | first line | jc |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Gold roles, hand sheet, before | 1,354 | 98.4% | 98.7% | 0.0% | 97.1% | 96.2% | 97.2% | 95.0% | 73.4% | 98.8% |
+| Gold roles, hand sheet, after | 1,359 | 100.0% | 98.7% | 0.0% | 97.0% | 96.2% | 97.2% | 95.0% | 73.5% | 98.8% |
+| Dev / holdout after | 622 / 724 | 100 / 100% | 99.4 / 98.5% | 0 / 0% | 99.7 / 95.9% | 99.0 / 94.6% | 96.8 / 97.7% | 94.5 / 95.4% | 76.2 / 70.9% | 99.4 / 98.6% |
+| Round 6 page labels and sheet, before (the page's file) | 1,347 | 98.4% | 98.8% | 0.0% | 96.8% | 96.0% | 97.0% | 95.5% | 73.3% | 98.3% |
+| Round 6 page labels and sheet, after | 1,352 | 100.0% | 98.8% | 0.0% | 96.7% | 95.9% | 97.0% | 95.5% | 73.4% | 98.3% |
+| Notes, before -> after | 384 | 97.9 -> 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
+
+Pages: Word 240 (round 6's page output) and 241 (gold roles, hand sheet, after); reference 224.
+LibreOffice: 234 -> 237 for gold roles and hand sheet, 237 for round 6's labels and sheet, reference
+223. The pages went up by about three because the sections that had 2 cm bottom margins now share
+the setup of most of the text (a 3 cm bottom margin); the gap to the reference is the line spacing.
+
+Word opened the gold-roles output and exported it to PDF; the document showed, with its tracked
+changes, and no repair prompt appeared. The first export was asked to write into a folder Word had
+not been given access to, and Word stopped on its "Grant File Access" dialog, which the agent's tools
+could not answer; the PDF was then saved into a folder Word may write to. The dialog stayed open, so
+the second configuration was exported with LibreOffice only. Outputs, PDFs and reports are in the
+case's private `work/round-8/`.
+
+Tests: 449 (437 before): six for the resolver and the comparison, twelve for the tidy-ups and
+settings on invented manuscripts, and one changed (an affiliation split from its author line now
+loses its brackets).
+
+### What remains
+
+- Line spacing, margins and page-number position stay the manuscript's when the guidelines are
+  silent. Whether a submission default should apply needs a decision: the design traces every
+  applied rule to the guidelines or a named style manual, and the manual baselines are not built.
+- The new slots (`chapters.label`, `layout.page-numbers`) are in the extraction prompt but were not
+  measured on the 18 guideline cases (that needs paid calls); no sentence of these guidelines fills them.
+- The contents list is checked, not rebuilt; front matter is not ordered.
+- The tool's own style values are constants, not the source's (the first-line indent is 0.75 cm
+  whatever the manuscript used).
+- Nobody has gone through the tracked changes in Word.
+
+### What round 9 should do
+
+- Measure the two new slots and `layout.spacing` on the 18 guideline cases with `--repeat`, and see
+  which other publishers state line spacing or page numbers.
+- Decide on submission defaults (a style-manual baseline, as the design describes, would give them
+  with a section reference).
+- Build the contents list as a Word TOC field from the chapter titles, and check the front-matter
+  order against a rule.
+- Take the first-line indent and quotation indents from the source when the sheet is silent.
+- Have a person accept and reject the changes in Word on this book, and run a second manuscript.
+
+Spent in this round: nothing. No model was called; every measurement used `gold-roles.json`, round
+6's page labels and the cached rule sheets ($3.41 of the allowance left, unchanged).
