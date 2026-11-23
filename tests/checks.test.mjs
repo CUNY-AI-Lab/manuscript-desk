@@ -150,6 +150,12 @@ test('bibliographies headed differently from chapter to chapter, where a rule as
   const found = byCheck(result, 'bibliography-headings');
   assert.deepEqual(found.map(finding => finding.paragraphIndex), [6]);
   assert.match(found[0].message, /2 different ways: “Bibliography” \(1 chapter\) and “Works cited” \(1 chapter\)/);
+  // Headings that differ only in their capitals differ; a trailing stop or colon does not count.
+  const rows = CHAPTERS.map(row => [...row]);
+  rows[6][0] = 'Works Cited:';
+  assert.match(byCheck(findingsOf(rows, [['c', 'consistency', null]]), 'bibliography-headings')[0].message, /“Works Cited” \(1 chapter\) and “Works cited” \(1 chapter\)/);
+  rows[14][0] = 'Works  Cited.';
+  assert.equal(byCheck(findingsOf(rows, [['c', 'consistency', null]]), 'bibliography-headings').length, 0);
 });
 
 test('figures: each need from its own rule, a caption line to write, and figures the text never mentions', () => {
@@ -188,14 +194,23 @@ test('quotations whose lines were joined, lines laid out with tabs, and Word tab
       { first: 0, last: 12, number: 1, titleBlock: [0, 1], parts: ['title', 'author'], typedNumbers: false },
       { first: 13, last: 18, number: 2, titleBlock: [13, 14], parts: ['title', 'author'], typedNumbers: false },
     ],
-    declared: [{ kind: DECLARED.linesJoined, count: 3, places: [16, 16, 17], removedWords: [], addedWords: [] }],
+    declared: [{ kind: DECLARED.linesJoined, count: 3, places: [16, 16, 18], removedWords: [], addedWords: [] }],
   });
+  // A heading stands between paragraphs 16 and 18, so the two are two quotations.
   assert.deepEqual(byCheck(result, 'table-from-tabs').map(finding => finding.paragraphIndex), [6]);
   assert.match(byCheck(result, 'table-from-tabs')[0].message, /^These 2 lines lay out a table with tabs/);
   assert.deepEqual(byCheck(result, 'table-for-layout').map(finding => finding.paragraphIndex), [8]);
   const joined = byCheck(result, 'quotation-lines-joined');
-  assert.equal(joined.length, 1);
-  assert.match(joined[0].message, /3 lines were joined/);
+  assert.deepEqual(joined.map(finding => finding.paragraphIndex), [16, 18]);
+  assert.match(joined[0].message, /2 lines were joined back into one paragraph/);
+  // Roots with only quotation lines between them are one quotation, one finding.
+  const quotation = model([...CHAPTERS.slice(0, 6), ['First line of a quotation', 'block-quotation'], ['', null], ['Second paragraph of it', 'block-quotation'], ['Body text after it.', 'body'], ['Another quotation', 'block-quotation'], ...CHAPTERS.slice(6)]);
+  const grouped = runChecks({ ...quotation, sheet: null, report: report({
+    chapters: [{ first: 0, last: 16, number: 1, titleBlock: [0, 1], parts: ['title', 'author'], typedNumbers: false }],
+    declared: [{ kind: DECLARED.linesJoined, count: 4, places: [6, 8, 8, 10], removedWords: [], addedWords: [] }],
+  }) });
+  assert.deepEqual(byCheck(grouped, 'quotation-lines-joined').map(finding => finding.paragraphIndex), [6, 10]);
+  assert.match(byCheck(grouped, 'quotation-lines-joined')[0].message, /3 lines were joined back into 2 paragraphs/);
   for (const finding of [...byCheck(result, 'table-from-tabs'), ...joined]) assert.equal(finding.ruleId, null, 'these concern the formatter\'s own changes');
 });
 
