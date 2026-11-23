@@ -73,7 +73,7 @@ test('every category has a label, a known group and known document types', () =>
 
 test('every slot names an existing category', () => {
   const known = new Set(ids(CATEGORIES));
-  assert.equal(Object.keys(SLOTS).length, 21);
+  assert.equal(Object.keys(SLOTS).length, 25);
   for (const [slot, { category, params }] of Object.entries(SLOTS)) {
     assert.ok(known.has(category), `${slot} -> ${category}`);
     for (const validator of Object.values(params)) assert.equal(typeof validator, 'function', slot);
