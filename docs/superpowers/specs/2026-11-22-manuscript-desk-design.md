@@ -358,7 +358,8 @@ reader, the model plumbing and the sign-in handling).
 - Worker routes, all `POST` with JSON unless noted, all authenticated except
   health: `GET /health`, `GET /api/session`, `GET /api/models`,
   `GET /api/quota`, `/api/rules` (guidelines text to rules for one category
-  group), `/api/review` (one passage plus rules to findings),
+  group), `/api/roles` (one passage of the manuscript to paragraph roles),
+  `/api/review` (one passage plus rules to findings),
   `/api/references` (entries to CSL-JSON), `/api/index/terms` (passage to
   proposed terms), `/api/index/judge` (hits in context to decisions).
   Prompts and JSON schemas live on the server. Bodies and deadlines are
@@ -404,6 +405,10 @@ comparison to go on: `glm-5.3`, `inkling-2-small`, `deepseek-v4.1-flash-1017`
 and `kimi-k3` all labelled about 94 percent of a hard chapter's paragraphs
 correctly, and passage review found all 18 planted errors only with thinking
 left on. Their defaults are to be measured the same way before they are fixed.
+Paragraph roles were then measured with the product's own code (`npm run roles-eval`, see
+`docs/eval/brill-loop.md`): `deepseek-v4.1-flash-1017` with thinking on labelled 98.0 percent of
+the dev chapters' paragraphs and 99.0 percent of the held-out chapters' correctly, for about $0.25
+a book.
 
 The menu follows the catalog; a default falls back to the first offered row if
 its model leaves the menu.

@@ -42,7 +42,8 @@ Layout:
 
 - `server/worker.js`: the Worker routes.
 - `web/`: the pages. `web/vendor/mupdf/` is written by `npm run vendor`.
-- `scripts/`: build, vendoring, local test server, release check and the extraction measurement.
+- `lib/`: the browser modules, testable in Node: `guidelines/` and `rules/` (the rule sheet), `docx/` (the manuscript reader) and `roles/` (paragraph roles).
+- `scripts/`: build, vendoring, local test server, release check and the extraction and roles measurements.
 - `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
 
 ## Try it locally with real models
@@ -81,9 +82,21 @@ Real guidelines stay outside the repository. The script reads the folder named b
 
 By default only scored cases run. `--all` also runs every other supported file as its own unscored case (a monograph unless `--doc-type` says otherwise), reported with counts only; `--only <folder>` runs one subfolder. Output goes to stdout: per model, one row per case with rules kept, left out, expected found, failed calls and seconds, then totals, cost, PASS or FAIL and the names of missed expected rules. It never prints guideline text, quotations or rule statements, and writes nothing to disk.
 
+## Measuring paragraph roles
+
+`scripts/roles-eval.mjs` measures how well the paragraphs of a real manuscript are labelled with their roles (title block, heading, block quotation, verse, bibliography entry, body and so on), against roles set by hand. It runs the product's own `.docx` reader (`lib/docx/read.js`), passages and labelling run (`lib/roles/`) and the payload `POST /manuscript/api/roles` sends, through the public Gateway with the key in `CAIL_API_KEY`:
+
+```bash
+CAIL_API_KEY=... npm run roles-eval -- --chapters dev [--model <id>] [--case <folder>]
+```
+
+A case is a folder under `manuscripts/` in `MANUSCRIPT_DESK_GUIDELINES` with `source.docx` and `gold-roles.json`. The script prints accuracies, counts and confusion tallies only, never manuscript text, and writes nothing to disk. The measured runs, the held-out result and the remaining confusions are in [`docs/eval/brill-loop.md`](docs/eval/brill-loop.md).
+
 ## Licence
 
 GNU Affero General Public License v3.0 only (see `LICENSE`). Because the tool is offered over a network, anyone who uses it is entitled to its complete source under the terms of that licence.
+
+The `.docx` reader uses [fflate](https://github.com/101arrowz/fflate) (MIT) to unzip the file and [saxes](https://github.com/lddubeau/saxes) (ISC, with xmlchars, MIT) to parse its XML; both licences are compatible with the AGPL.
 
 This suite includes [MuPDF.js](https://mupdf.readthedocs.io/) by Artifex Software, Inc., which is licensed under the GNU AGPL v3.0 or later. Its licence is copied to `web/vendor/mupdf/LICENSE` and served with it from `vendor/mupdf/`.
 
