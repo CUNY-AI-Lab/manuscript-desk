@@ -13,8 +13,14 @@ const MAX_OUTPUT_TOKENS = 16000;
 const REASONING_HEADROOM_TOKENS = 4000;
 const REASONING_MAX_TOKENS = 10000;
 
-export function modelControls(row, expectedOutputTokens) {
+// With { thinking: true } a reasoning model keeps its thinking on (low effort) and gets the whole
+// hard cap: a call that must weigh many small judgments together, such as the roles of a passage's
+// paragraphs, is worth the extra output.
+export function modelControls(row, expectedOutputTokens, { thinking = false } = {}) {
   const contextCap = Number.isInteger(row?.context_length) && row.context_length > 0 ? Math.floor(row.context_length / 2) : Infinity;
+  if (row?.capabilities.includes('reasoning') && thinking) {
+    return { max_tokens: Math.min(REASONING_MAX_TOKENS, contextCap), reasoning_effort: 'low', ...(row.provider === 'workers-ai' ? { chat_template_kwargs: { enable_thinking: true } } : {}) };
+  }
   if (row?.capabilities.includes('reasoning')) {
     // The Gateway rejects reasoning_effort for a model without the reasoning capability, so it is
     // sent only on the catalog's say-so; enable_thinking is a Workers AI chat-template switch.
