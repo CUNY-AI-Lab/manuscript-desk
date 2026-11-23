@@ -64,7 +64,7 @@ These make it a failure even if it runs:
 
 From the [CAIL Tool Integration Contract](https://github.com/CUNY-AI-Lab/cail-knowledge-base/blob/main/05%20Infrastructure/CAIL%20Tool%20Integration%20Contract.md)
 and the Bibliography Converter, which is the pattern to copy
-(`/Users/veritas44/Downloads/github/biblio-zotero`, branch `origin/main`):
+(`../biblio-zotero`, branch `origin/main`):
 
 - A Cloudflare Worker with static assets, mounted by CAIL Doorway under
   `https://tools.ailab.gc.cuny.edu/`. Doorway is the only way in: no
@@ -294,7 +294,7 @@ A JavaScript module in the browser writes the findings into the document:
   (my call).
 
 Stefano's Python `tracked.py`
-(`~/.claude/skills/jitp-copyediting/scripts/tracked.py`) is the reference for
+(`the JITP copyediting skill's `tracked.py``) is the reference for
 how these revisions are built; the module is a JavaScript port of the same
 approach, extended to footnotes and endnotes.
 

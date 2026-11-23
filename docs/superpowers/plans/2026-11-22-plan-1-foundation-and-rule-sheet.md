@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-22-manuscript-desk-design.md`. This plan covers build-order steps 1 and 2. Later plans: 2 Report (reader, checkers, baselines), 3 Marked-up file, 4 References, 5 Edited collections, 6 Index Builder.
 
-**Pattern to copy:** the Bibliography Converter at `/Users/veritas44/Downloads/github/biblio-zotero`. Its working tree is on an old branch; always read with `git -C /Users/veritas44/Downloads/github/biblio-zotero show origin/main:<path>`. Read-only: never edit that repository. MuPDF vendoring: `/Users/veritas44/Downloads/github/book-index/scripts/vendor-mupdf.mjs`.
+**Pattern to copy:** the Bibliography Converter at `../biblio-zotero`. Its working tree is on an old branch; always read with `git -C ../biblio-zotero show origin/main:<path>`. Read-only: never edit that repository. MuPDF vendoring: `../book-index/scripts/vendor-mupdf.mjs`.
 
 ## Global Constraints
 
