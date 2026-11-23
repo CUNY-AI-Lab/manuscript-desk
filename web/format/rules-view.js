@@ -1,5 +1,5 @@
 // Renders the rule sheet's rules: the conflicts, then the rules under their category headings, each
-// with its mode menu, on/off switch, Edit and Remove; and the "Add a rule" form. Every text from the
+// with its settings, mode menu, on/off switch, Edit and Remove; and the "Add a rule" form. Every text from the
 // sheet (model output or an uploaded file) is set with textContent. Nothing here runs at import
 // time, so the module also loads under Node.
 
@@ -34,6 +34,24 @@ const SETTINGS = {
 
 export const settingLabel = (slot, name) => SETTINGS[slot]?.[name]?.[0] ?? name;
 export const valueLabel = (slot, name, value) => SETTINGS[slot]?.[name]?.[1]?.[value] ?? String(value);
+
+// A rule's settings as its row shows them, one line each, with the Edit form's labels:
+// "Quotation marks: Single (‘ ’)", "Use the serial (Oxford) comma: Yes", "Font: not given".
+export function settingsInWords(slot, params) {
+  if (slot === null || !SLOTS[slot]) return [];
+  return Object.keys(SLOTS[slot].params).map(name => {
+    const value = params?.[name];
+    const words = value === null || value === undefined ? 'not given'
+      : typeof value === 'boolean' ? (value ? 'Yes' : 'No')
+        : typeof value === 'number' ? value.toLocaleString('en-US') : valueLabel(slot, name, value);
+    return `${settingLabel(slot, name)}: ${words}`;
+  });
+}
+
+function settingsList(rule) {
+  const lines = settingsInWords(rule.slot, rule.params);
+  return lines.length ? el('ul', { className: 'rule-settings', 'aria-label': 'Settings' }, ...lines.map(line => el('li', { text: line }))) : null;
+}
 
 // What kind of control a setting needs, read from its validator's `allowed` description.
 export function fieldKind(validator) {
@@ -160,6 +178,7 @@ function ruleRow(rule, view, actions) {
   row.append(
     el('p', { className: 'rule-statement', id: statementId, text: rule.statement }),
     sourceLine(rule.source),
+    ...[settingsList(rule)].filter(Boolean),
     el('div', { className: 'rule-controls' },
       el('div', { className: 'field mode-field' }, el('label', { for: modeId, text: 'What to do' }), modeMenu(rule, modeId, mode => actions.setMode(rule.id, mode))),
       el('div', { className: 'check switch' }, toggle, el('label', { for: switchId, text: 'Use this rule' })),
@@ -204,6 +223,7 @@ function conflictBlock(conflicts, actions) {
         el('ul', { className: 'rule-list' }, ...rules.map(rule => el('li', { className: 'rule' },
           el('p', { className: 'rule-statement', id: `rule-${rule.id}-statement`, text: rule.statement }),
           sourceLine(rule.source),
+          settingsList(rule),
           el('button', { type: 'button', className: 'button secondary', text: 'Keep this rule', 'aria-describedby': `rule-${rule.id}-statement`, onclick: () => actions.keep(rule.id) })))));
     }));
 }
