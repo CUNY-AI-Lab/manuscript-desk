@@ -68,7 +68,6 @@ test('states the task, the reply shape and the verbatim-quote rule', () => {
   assert.match(prompt, /"fix": mechanical, applied as a tracked change/);
   assert.match(prompt, /"flag": needs judgment, left as a comment/);
   assert.match(prompt, /"supply": something only the author can provide, goes on the To-dos list/);
-  assert.match(prompt, /"manual\.named": the style manual and edition the guidelines tell the author to follow, copied verbatim, or null/);
   assert.match(prompt, /a monograph/);
 });
 
@@ -107,6 +106,19 @@ test('the structure prompt says other is only for requirements that fit no categ
   assert.ok(prompt.includes('- "other" (Other requirements)'));
   assert.match(prompt, /Use "other" only for a requirement that fits none of the categories listed below and none of the topics read in the other passes/);
   assert.equal(/Also leave out any requirement that fits none/.test(prompt), false);
+});
+
+test('manual.named is the citation or editorial style manual, never a dictionary', () => {
+  const prompt = rulesPrompt({ docType: 'article', group: 'style' });
+  const line = prompt.split('\n').find(text => text.startsWith('"manual.named":'));
+  assert.ok(line);
+  assert.match(line, /the citation or editorial style manual the guidelines tell the author to follow/);
+  for (const example of ['The Chicago Manual of Style', 'MLA Handbook', 'APA Publication Manual', 'Harvard', 'OSCOLA', "a publisher's own named house style guide"]) {
+    assert.ok(line.includes(example), example);
+  }
+  assert.match(line, /with its edition if the guidelines state one, copied verbatim/);
+  assert.match(line, /A dictionary or spelling reference[^.]* is not a style manual/);
+  assert.match(line, /null if the guidelines name no style manual/);
 });
 
 test('refuses an unknown document type or group', () => {

@@ -55,7 +55,7 @@ Fields of each rule:
   - "supply": something only the author can provide, goes on the To-dos list.
 - "params": for a slot, every param it lists, each with one of its allowed values.
 
-"manual.named": the style manual and edition the guidelines tell the author to follow, copied verbatim, or null if they name none.
+"manual.named": the citation or editorial style manual the guidelines tell the author to follow (of the kind of The Chicago Manual of Style, the MLA Handbook, the APA Publication Manual, Harvard, OSCOLA, or a publisher's own named house style guide), with its edition if the guidelines state one, copied verbatim from the guidelines. A dictionary or spelling reference (such as Merriam-Webster or the Oxford English Dictionary) is not a style manual, even when the guidelines say spelling follows it. null if the guidelines name no style manual.
 
 Categories:
 ${listed(categoryLines)}
