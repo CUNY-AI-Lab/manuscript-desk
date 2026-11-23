@@ -42,13 +42,20 @@ Never checked by a person:
 
 Not built (checked against the design and the code, round 7):
 
-- Deployment: the Doorway route, the verifier key and bindings, the catalog entry and a signed-in
-  acceptance run, a separate step the design leaves out of this build.
-- The once-per-page sign-in guard the plan lists before deployment: on a lost session the page goes
-  to the sign-in path every time, with nothing to stop a session that stays invalid from bouncing it.
-- Deletion of the saved work after 24 hours happens only when the page is next opened (the plan's
-  follow-up before deployment); the design's deletion on download is not built (the page clears on
-  Start over).
+- Deployment. Built for it (2026-11-23): the release job and its readback, the once-per-page
+  sign-in guard, the saved work deleted 24 hours after the last change also while the page is open
+  (kept after download, by decision; "Delete saved work now" deletes it at once), and a beta line on
+  both pages; see the README's Release section. Not done: the first release, the Doorway route, the
+  verifier key in the `production` environment, the catalog entry and a signed-in acceptance run.
+- Usage attribution. The Worker sends `X-CAIL-App: manuscript` on every Gateway call, but the Gateway
+  does not read that header for attribution: it takes the tool from the `tool` claim of the
+  `cail:gateway` assertion Doorway signs, which the Worker passes on unchanged and cannot alter. Doorway
+  names a tool there only from its `GATEWAY_TOOLS` list (`apps/doorway/src/identity.ts`), and the
+  Gateway keeps only ids in its `CAIL_TOOLS` and `JWT_TOOLS` lists (`src/tool-attribution.ts`), so
+  this tool's calls are reported as `unattributed`, as the Bibliography Converter's are. Naming it
+  takes `"manuscript"` in both lists, in the Gateway contract's tool lists
+  (`docs/gateway-contract.md`) and in Admission's `tool` CHECK (`apps/admission/src/registry-schema-v24.ts`,
+  a migration); no change here.
 - Chapter labels are added only when the rule sheet sets `chapters.label` (round 8); these
   guidelines do not, so none is added in this job (the hand job added 12).
 - A rebuilt contents list: the typed list is kept and compared with the chapters; none is built

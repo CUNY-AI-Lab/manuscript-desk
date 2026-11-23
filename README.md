@@ -2,7 +2,7 @@
 
 A CUNY AI Lab tool suite that prepares a finished manuscript for a publisher's or journal's submission guidelines. It reads the guidelines into a rule sheet that the author reviews, applies the mechanical changes as Word tracked changes, and lists what only the author can supply. It has two tools: the Formatter and the Index Builder.
 
-It is for CUNY AI Lab members, behind CUNY Login, at `https://tools.ailab.gc.cuny.edu/manuscript/`.
+It is for CUNY AI Lab members, behind CUNY Login, at `https://tools.ailab.gc.cuny.edu/manuscript/`. It is a beta under test: the author checks every result before submitting it.
 
 ## Privacy
 
@@ -38,7 +38,7 @@ npm run check                   # vendor, syntax checks, all tests, then the bui
 npm test                        # tests only
 npm run build                   # build dist/ (needs npm run vendor first)
 npm run dev                     # build, then serve the pages and the Worker's routes at http://127.0.0.1:8787/manuscript/ (see below)
-node scripts/verify-release.mjs # check wrangler.toml keeps the Worker private and bound to the Gateway
+node scripts/verify-release.mjs # check wrangler.toml keeps the Worker private and bound to the Gateway (--deployed: see Release)
 npx wrangler deploy --dry-run --outdir /tmp/cail-manuscript-dry   # offline bundle check
 ```
 
@@ -60,6 +60,35 @@ Layout:
 - `lib/`: the browser modules, testable in Node: `guidelines/` and `rules/` (the rule sheet), `docx/` (the manuscript reader, the package writer, the comments writer, a builder for new documents and the structural validator), `roles/` (paragraph roles), `format/` (the formatting stage), `checks/` (the To-do checks) and `todos/` (the To-dos list and the companion documents).
 - `scripts/`: build, vendoring, local test server, release check and the extraction, roles, formatting and To-dos measurements.
 - `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
+
+## Release
+
+Releases go through the GitHub Actions workflow **Check and private release** (`.github/workflows/ci.yml`) only, never from a local machine. It is the Bibliography Converter's release job with this Worker's names.
+
+### Order of a first release
+
+1. **This Worker, privately.** Merge to `main` and wait for the workflow's `check` job (`npm ci`, `npm run check`, `wrangler deploy --dry-run`). Then run the workflow by hand from `main` with the exact current 40-character commit of `main`, for example `gh workflow run ci.yml --repo CUNY-AI-Lab/manuscript-desk --ref main -f sha="$(git rev-parse origin/main)"` after a fetch. The `release` job runs in the `production` environment. It refuses a commit that is not the current `main` (before the build, before the deploy and after the readback), checks that `CAIL_IDENTITY_JWKS` verifies both audiences, `cail:manuscript` and `cail:gateway`, writes it to a private secrets file, deploys with `wrangler deploy --strict --tag <sha> --message "commit <sha>" --secrets-file …`, and runs `node scripts/verify-release.mjs --deployed`. The Worker `cail-manuscript` then exists with no public address: `workers_dev` and `preview_urls` are off and it has no route, so nothing reaches it yet.
+2. **Then Doorway mounts it**, in `CUNY-AI-Lab/cail-tools-admission` (not changed here): a service binding to `cail-manuscript`, the routes under `/manuscript` (pages and `/manuscript/api`) forwarding both identity assertions, `cail:manuscript` and `cail:gateway`, for one person, and the launch path `/launch/manuscript`. Doorway's release checks that its bindings resolve, so it cannot go first.
+3. **Then a signed-in member's acceptance run** (below). The release job has no CUNY session and proves only what Cloudflare reports.
+
+To roll back, revert on `main` and release the new `main` commit: the job releases only the current `main`.
+
+### Secrets of the `production` environment
+
+Set in GitHub: repository `CUNY-AI-Lab/manuscript-desk`, Settings, Environments, `production`. Names only here; never put a value in the repository, an issue or a log. Give the environment required reviewers, so a release needs someone's approval.
+
+- `CLOUDFLARE_API_TOKEN`: a Cloudflare API token for the CUNY AI Lab account that may edit Workers scripts there. The release deploys with it and reads the deployment back with it.
+- `CLOUDFLARE_ACCOUNT_ID`: the id of that Cloudflare account. It must be the account that holds Doorway (`cail-doorway`) and the Gateway (`cail-model-api`), because service bindings resolve only within one account.
+- `CAIL_IDENTITY_JWKS`: the fleet's pinned identity verifier key set (public keys, as JSON), the same one Doorway's assertions are checked against and the other tools hold. The release refuses it unless it verifies both audiences, then installs it on the Worker as a secret. `--secrets-file` adds and replaces, never deletes: a secret removed from GitHub stays on the Worker until it is deleted there.
+
+The job also uses `github.token` for the checks against `main`; nothing else is configured by hand. No Google Books key or other secret is used.
+
+### Verify
+
+- The release job's last lines: `wrangler.toml passes the release check.` and `Private Worker control-plane readback passed: commit <sha>, version <id>, 100% traffic.` The readback (`scripts/verify-release.mjs --deployed`) asserts, for `cail-manuscript`: one version at 100% of traffic tagged with the commit, workers.dev and previews off, the `GATEWAY` service binding to `cail-model-api`, the `CAIL_IDENTITY_JWKS` secret, the issuer, the assets and version-metadata bindings, and the runtime's compatibility date and flags. It reads Cloudflare's configuration only; it does not call the Worker.
+- Once Doorway mounts it, signed in: `https://tools.ailab.gc.cuny.edu/manuscript/health` answers `status: "ready"` with the release's `version_id` and `tag` (the commit). It loads the verifier keys and reads the public model catalog through the `GATEWAY` binding, so it proves the Gateway path without spending anything. Signed out, `/manuscript/` goes to sign-in and `/manuscript/api/session` is refused.
+- A member then takes the invented test files in `tests/fixtures/` (never a private manuscript) through all six steps of `https://tools.ailab.gc.cuny.edu/manuscript/format/`, opens the downloads in Word, and records the Doorway and Worker version ids with the outcome.
+- The Gateway reports this tool's model calls as unattributed until Doorway names the tool in the Gateway assertion and the Gateway accepts its id (see `docs/eval/brill-loop.md`, "Where things stand"); the spend still counts against the person's allowance.
 
 ## Try it locally with real models
 
