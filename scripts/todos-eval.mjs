@@ -6,14 +6,16 @@
 // the tool produced (same kind, same chapter, anchored on the same paragraph or within two
 // paragraphs of it), the misses by kind, and the findings that match no comment, by kind.
 //
-//   npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>]
+//   npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles]
 //
 // A case is a folder under manuscripts/ in MANUSCRIPT_DESK_GUIDELINES (default
 // ../manuscript-desk-guidelines) with source.docx, gold-roles.json and work/comments-key.json (and
 // work/companions-key.json for the companion documents). The outputs (the formatted file with its
 // comments, the To-dos list, the companion documents) go to the case's work/ folder. Results go to
 // stdout: counts, percentages, kinds and class names. It prints no manuscript text and no comment
-// wording, and makes no model call: the rule sheet and predicted roles come from the work/ cache.
+// wording. The rule sheet and predicted roles come from the work/ cache; the one model call it can
+// make, with --running-titles, proposes running titles, uses the key in CAIL_API_KEY and is cached
+// in work/running-titles.json.
 
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -28,17 +30,22 @@ import { formatDocx } from '../lib/format/format.js';
 import { compareWords, documentWords } from '../lib/format/words.js';
 import { runChecks } from '../lib/checks/run.js';
 import { companionDocuments } from '../lib/todos/companions.js';
+import { proposeRunningTitles } from '../lib/todos/running.js';
+import { fullTitle } from '../lib/todos/shared.js';
+import { ruleWith } from '../lib/checks/rules.js';
 import { commentsFor, todosDocument } from '../lib/todos/todos.js';
 import { validateSheet } from '../lib/rules/schema.js';
+import { runningTitlesPayload } from '../server/prompts.js';
 import { checkGold } from './roles-eval.mjs';
-import { table } from './generality.mjs';
+import { costOf, createGatewayCall, readCatalog, table } from './generality.mjs';
 
 const DEFAULT_FOLDER = fileURLToPath(new URL('../../manuscript-desk-guidelines', import.meta.url));
+const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
 export const CLASSES = ['structure', 'reading', 'human'];
 // How far a finding may sit from the comment's paragraph, in paragraphs with text.
 export const NEAR = 2;
 
-const USAGE = `Usage: npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>]
+const USAGE = `Usage: npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles]
 
 Runs the formatter and the To-do checks on manuscripts/<case>/source.docx in MANUSCRIPT_DESK_GUIDELINES
 (default ../manuscript-desk-guidelines) and compares the findings with the comments of the hand-formatted
@@ -47,7 +54,9 @@ file, keyed in work/comments-key.json.
   --sheet       hand (work/hand-sheet.json, the default), extracted (work/extracted-sheet.json) or a sheet file
   --chapters    the comments to report: dev (the default: the dev chapters and the front matter), holdout or all
   --key         the answer key (default work/comments-key.json)
-No model call is made; a missing cache is an error.`;
+  --running-titles  propose running titles with a model (cached in work/running-titles.json; a call,
+                    made only when the cache is missing, uses the key in CAIL_API_KEY, which pays for it)
+Otherwise no model call is made; a missing cache is an error.`;
 
 // ---------------------------------------------------------------------------------------------
 // Matching
@@ -131,13 +140,44 @@ async function readJson(file) {
   }
 }
 
+/**
+ * Running-title proposals from the model, cached in work/running-titles.json; a call is made only
+ * when the cache is missing, with the key in CAIL_API_KEY. Null when no rule asks for running titles.
+ */
+async function runningTitles({ work, sheet, report, paragraphs, environment, err }) {
+  const rule = ruleWith(sheet, { slot: 'running-title.length' });
+  if (!rule) return null;
+  const chapters = (report.chapters ?? []).map(chapter => ({ first: chapter.first, title: fullTitle(chapter, paragraphs) }));
+  // Answers are cached by the text of the request, so a rerun pays for nothing it asked before.
+  const file = path.join(work, 'running-titles.json');
+  const cache = (await readJson(file))?.answers ?? {};
+  let rows = null;
+  let call = null;
+  const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
+  const ask = async ({ titles, max }) => {
+    const id = `${max}\u0000${titles}`;
+    if (cache[id]) return cache[id];
+    const key = environment.CAIL_API_KEY?.trim();
+    if (!key) throw new Error('Running titles are not cached and CAIL_API_KEY is not set; set it to your CAIL Gateway key (it pays for the call).');
+    rows ??= (await readCatalog()) ?? new Map();
+    call ??= createGatewayCall({ key, rows, usage, payloadOf: (request, row) => runningTitlesPayload({ ...request, row }) });
+    err(`${DEFAULT_MODEL}: proposing running titles (cached afterwards)`);
+    const { content } = await call({ model: DEFAULT_MODEL, titles, max });
+    cache[id] = content;
+    await writeFile(file, JSON.stringify({ model: DEFAULT_MODEL, answers: cache }));
+    return content;
+  };
+  const result = await proposeRunningTitles({ chapters, max: rule.params.max, call: ask });
+  return { ...result, cost: usage.calls ? costOf(usage, rows?.get(DEFAULT_MODEL)) : undefined };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Command line
 
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, 'running-titles': { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -183,7 +223,8 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const validity = validateDocx(commented.bytes);
   const todos = todosDocument({ findings, checks, sheet, report, paragraphs: read.paragraphs });
   const todosValidity = validateDocx(todos.bytes);
-  const companions = companionDocuments({ sheet, report, paragraphs: read.paragraphs, roles, findings, checks });
+  const running = values['running-titles'] ? await runningTitles({ work, sheet, report, paragraphs: read.paragraphs, environment, err }) : null;
+  const companions = companionDocuments({ sheet, report, paragraphs: read.paragraphs, roles, findings, checks, proposals: running?.proposals ?? new Map() });
   const tag = `${values.predicted ? 'predicted' : 'gold'}-${sheetChoice === 'hand' || sheetChoice === 'extracted' ? sheetChoice : 'sheet'}`;
   await writeFile(path.join(work, `todos-output-${tag}.docx`), commented.bytes);
   await writeFile(path.join(work, `todos-list-${tag}.docx`), todos.bytes);
@@ -252,13 +293,13 @@ async function main(argv, environment, { out = console.log, err = console.error 
     const sameChapters = expected ? Object.entries(expected.byChapter).every(([chapter, count]) => perChapter.get(chapter) === count) && perChapter.size === Object.keys(expected.byChapter).length : null;
     out(`  alt texts: produced; ${alt.entries.length} figures (reference ${expected?.figures ?? '?'}), by chapter ${tally(perChapter)}${sameChapters === null ? '' : sameChapters ? ', same chapters as the reference' : ', chapters differ from the reference'}.`);
   } else out('  alt texts: not produced (no rule asks for them).');
-  const running = [...byName.values()].find(companion => companion.name.startsWith('Running'));
-  if (running) {
-    const listedChapters = running.entries.map(entry => keyOfStart(entry.chapter));
+  const titles = [...byName.values()].find(companion => companion.name.startsWith('Running'));
+  if (titles) {
+    const listedChapters = titles.entries.map(entry => keyOfStart(entry.chapter));
     const expected = companionsKey?.runningTitles?.chapters;
     const proposals = new Map();
-    for (const entry of running.entries) bump(proposals, entry.source ?? 'blank');
-    out(`  running titles: produced (${running.name.includes('proposals') ? 'proposals' : 'template'}); ${listedChapters.length} chapters listed (reference ${expected?.length ?? '?'}${expected ? `, ${listedChapters.every(item => expected.includes(item)) && listedChapters.length === expected.length ? 'same' : 'differ'}` : ''}); proposals ${tally(proposals)}.`);
+    for (const entry of titles.entries) bump(proposals, entry.source ?? 'blank');
+    out(`  running titles: produced (${titles.name.includes('proposals') ? 'proposals' : 'template'}); ${listedChapters.length} chapters listed (reference ${expected?.length ?? '?'}${expected ? `, ${listedChapters.every(item => expected.includes(item)) && listedChapters.length === expected.length ? 'same' : 'differ'}` : ''}); proposals ${tally(proposals)}${running ? `; model proposals kept ${running.proposals.size} after ${running.calls} ${running.calls === 1 ? 'call' : 'calls'}, dropped ${running.dropped.length}${running.dropped.length ? ` (${tally(new Map(running.dropped.map(entry => [entry.reason, running.dropped.filter(other => other.reason === entry.reason).length])))})` : ''}${running.cost === undefined ? ' (cached)' : `, cost ${running.cost === null ? 'unknown' : `$${running.cost.toFixed(4)}`}`}` : ''}.`);
   } else out('  running titles: not produced (no rule asks for them).');
   const checklist = byName.get('Checklist');
   if (checklist) out(`  checklist: produced; ${checklist.entries.length} requirements (reference ${companionsKey?.checklist?.rows ?? '?'} rows); status ${tally(new Map(Object.entries(checklist.tally)))}.`);

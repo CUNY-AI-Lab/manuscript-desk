@@ -2,7 +2,7 @@ import { CAIL_CANONICAL_ISSUER, loadIdentityVerifierConfig, readIdentityKeyring,
 import { CailError, createCailClient } from '@cuny-ai-lab/cail-client';
 import { DOC_TYPES } from '../lib/rules/schema.js';
 import { modelControls } from './model.js';
-import { GROUPS, rolesPayload, rulesPrompt } from './prompts.js';
+import { GROUPS, rolesPayload, rulesPrompt, runningTitlesPayload } from './prompts.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -18,6 +18,7 @@ const RULES_OUTPUT_TOKENS = 6000;
 // The browser cuts a manuscript into passages of about 12,000 characters of paragraphs to label,
 // plus a few paragraphs of context on each side; this leaves room for long context lines.
 const MAX_PASSAGE_CHARS = 40000;
+const MAX_TITLES_CHARS = 20000;
 const CATALOG_CACHE_MS = 10 * 60 * 1000;
 const CATALOG_RETRY_MS = 30000;
 const CATALOG_TIMEOUT_MS = 5000;
@@ -190,6 +191,17 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         if (typeof body.passage !== 'string' || !body.passage.trim() || body.passage.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of the manuscript at a time.');
         const payload = rolesPayload({ model, passage: body.passage, row: await catalogRow(model, signal) });
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished labelling this part of the manuscript. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      if (path === '/api/running-titles' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (!Number.isInteger(body.max) || body.max < 10 || body.max > 200) throw new AppError('invalid_request', 'A running title\'s length must be a whole number of characters from 10 to 200.');
+        // The titles are never echoed in an error, logged or stored.
+        if (typeof body.titles !== 'string' || !body.titles.trim() || body.titles.length > MAX_TITLES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 20,000 characters of chapter titles.');
+        const payload = runningTitlesPayload({ model, titles: body.titles, max: body.max, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished the running titles. Try again, or choose another model.');
         return json({ content, request_id: requestId });
       }
       if (path.startsWith('/api/')) throw new AppError('not_found', 'Not found.', 404);
