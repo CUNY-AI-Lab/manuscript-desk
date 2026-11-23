@@ -103,7 +103,9 @@ function createCalls({ key, rows, usage, work, judgeThinking = null, subThinking
       // judge with thinking off), and for a repeated run (--judge-runs) its own salt, so it asks again.
       const id = JSON.stringify(payloadOf(request, rows.get(request.model)).messages) + request.model + tagOf(request) + (request.salt ?? '');
       if (typeof cache[id] === 'string') { fromCache += 1; return { content: cache[id] }; }
-      if (!gateway) throw Object.assign(new Error('Not cached, and CAIL_API_KEY is not set.'), { code: 'no_key' });
+      // Replaying without a key: a call the paid run had to ask again as two halves is found under the
+      // halves' keys, so a miss is answered as running out of room, which makes the run ask the halves.
+      if (!gateway) throw Object.assign(new Error('Not cached, and CAIL_API_KEY is not set.'), { code: 'model_output_limit' });
       const answer = await gateway(request);
       cache[id] = answer.content;
       writing = writing.then(async () => { await mkdir(work, { recursive: true }); await writeFile(cacheFile, JSON.stringify({ answers: cache })); });
