@@ -11,7 +11,7 @@ import { normalizeForMatch } from '../../lib/rules/quote.js';
 import { cleanPastedText, readGuidelines } from '../../lib/guidelines/read.js';
 import { ApiError, createApi } from '../shared/api.js';
 import { chooseModel, modelMenu } from '../shared/models.js';
-import { createStore } from '../shared/store.js';
+import { createStore, watchExpiry } from '../shared/store.js';
 import { el, plainReason, renderAddRule, renderRules } from './rules-view.js';
 import { createManuscriptStep } from './manuscript-step.js';
 import { createOutputStep } from './output-step.js';
@@ -226,14 +226,26 @@ function start() {
     if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB });
   } catch {}
   let restored = false;
+  // False once the person has chosen "Delete saved work now": nothing more is kept for this page.
+  let keeping = true;
   let saving = Promise.resolve();
+  let expiry = null;
+  // A save moves the deletion time on. The watch looks again a little after the last of a burst of
+  // saves (labelling saves after every passage), so its reads do not hold up the saves and clears.
+  let lookTimer = null;
+  const lookSoon = () => {
+    clearTimeout(lookTimer);
+    lookTimer = setTimeout(() => void expiry?.check(), 2000);
+  };
   const queue = work => {
-    saving = saving.then(work).catch(() => { $('storage-note').hidden = false; });
+    saving = saving.then(work).then(lookSoon).catch(() => { $('storage-note').hidden = false; });
     return saving;
   };
-  // Saves the work so far (never the files themselves); before the saved copy is read back, nothing
-  // is written, so an early save cannot overwrite it.
-  const save = () => (store && restored ? queue(() => store.saveJob('format', structuredClone(savedState(state)))) : saving);
+  // Saves may be written once the saved copy has been read back (so an early save cannot overwrite
+  // it) and while the person has not asked for nothing to be kept.
+  const canSave = () => Boolean(store && restored && keeping);
+  // Saves the work so far (never the files themselves).
+  const save = () => (canSave() ? queue(() => store.saveJob('format', structuredClone(savedState(state)))) : saving);
   // sessionStorage records an automatic sign-in restart, so it happens at most once a minute; where
   // it cannot be read, the page never restarts sign-in on its own and offers the link instead.
   let sessionStore = null;
@@ -267,6 +279,10 @@ function start() {
   };
 
   const announce = message => { $('announcer').textContent = message; };
+  const showWorkNotice = message => {
+    $('work-notice').textContent = message;
+    $('work-notice').hidden = false;
+  };
   const showErrors = messages => {
     $('error-banner').replaceChildren(...messages.map(message => el('p', { text: message })));
     $('error-banner').hidden = messages.length === 0;
@@ -506,17 +522,45 @@ function start() {
     announce(`Rule sheet loaded, with ${plural(result.sheet.rules.length, 'rule', 'rules')}. ${LOADED_NOTICE}`);
   }
 
-  function startOver() {
-    if ((state.guidelines.length || state.sheet || job.labels || job.file) && !confirm('Start over? This clears the guidelines, the rule sheet, the manuscript and its paragraph labels and your corrections from this page and this browser.')) return;
+  // Clears the work from the page and from this browser.
+  function clearWork() {
     state.running?.abort();
     manuscript.startOver();
     Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false });
     $('paste-box').value = '';
     showErrors([]);
     render();
-    if (store) void queue(() => store.clearJob('format'));
+    if (store) void queue(() => store.clearAll());
+  }
+
+  function startOver() {
+    if ((state.guidelines.length || state.sheet || job.labels || job.file) && !confirm('Start over? This clears the guidelines, the rule sheet, the manuscript and its paragraph labels and your corrections from this page and this browser.')) return;
+    clearWork();
+    $('work-notice').hidden = true;
     focus('doc-type-title');
     announce('Started over. Your work was cleared from this browser.');
+  }
+
+  // 24 hours after the last change, the saved work is deleted from this browser, also while the page
+  // stays open; the work on the page goes with it, so a later change cannot write it back.
+  function expired() {
+    clearWork();
+    const message = 'Your work was deleted from this page and this browser because 24 hours passed since your last change. Start again from step 1.';
+    showWorkNotice(message);
+    announce(message);
+  }
+
+  // Deletes what this browser keeps and keeps nothing more while this page is open. The work on the
+  // page stays until the page is closed or reloaded.
+  async function deleteSaved() {
+    if (!confirm('Delete the work kept in this browser now? The work on this page stays until you close or reload it, but nothing more is kept in this browser while it is open.')) return;
+    keeping = false;
+    expiry?.stop();
+    $('delete-saved').disabled = true;
+    if (store) await queue(() => store.clearAll());
+    const message = 'The work kept in this browser was deleted, and nothing more is kept in it while this page is open. The work on this page stays until you close or reload it. If the page has to send you to sign in again, that work is lost.';
+    showWorkNotice(message);
+    announce(message);
   }
 
   // The account panel, as in the Lab's other tools: CUNY session and shared allowance.
@@ -586,10 +630,11 @@ function start() {
     if (file) await loadSheet(file);
   });
   $('start-over').addEventListener('click', startOver);
+  $('delete-saved').addEventListener('click', () => void deleteSaved());
   $('refresh-quota').addEventListener('click', () => void refreshStatus());
 
   const stepContext = {
-    $, api, store, queue, job, state, announce, showErrors, isRestored: () => restored,
+    $, api, store, queue, job, state, announce, showErrors, canSave,
     changed: ({ focusId } = {}) => { render(); if (focusId) focus(focusId); },
     refreshStatus: () => refreshStatus(),
     roles: () => manuscript.roles(),
@@ -605,6 +650,15 @@ function start() {
     } catch {}
     await manuscript.restore();
     restored = true;
+    if (store) {
+      expiry = watchExpiry({ store, onExpired: expired, busy: () => Boolean(state.running || job.labelling || job.formatting) });
+      // Timers are late or do not run while a computer sleeps, so look again when the page comes back.
+      const look = () => { if (document.visibilityState !== 'hidden') void expiry.check(); };
+      document.addEventListener('visibilitychange', look);
+      globalThis.addEventListener('focus', look);
+      globalThis.addEventListener('pageshow', look);
+      void expiry.check();
+    }
     render();
     void refreshStatus();
     void loadModels();

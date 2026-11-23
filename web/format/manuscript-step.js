@@ -20,7 +20,7 @@ const OPEN_LIMIT = 400;
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /**
- * @param {{ $: Function, api: object, store: object | null, queue: Function, isRestored: () => boolean, announce: Function,
+ * @param {{ $: Function, api: object, store: object | null, queue: Function, canSave: () => boolean, announce: Function,
  *   showErrors: Function, job: object, changed: Function, refreshStatus: Function }} ctx
  */
 export function createManuscriptStep(ctx) {
@@ -28,7 +28,7 @@ export function createManuscriptStep(ctx) {
   let filter = 'check';
   let fileNotice = null;
 
-  const save = () => (ctx.store && ctx.isRestored() ? ctx.queue(() => (job.labels ? ctx.store.saveJob(SAVED_KEY, structuredClone(savedLabels(job.labels))) : ctx.store.clearJob(SAVED_KEY))) : Promise.resolve());
+  const save = () => (ctx.canSave() ? ctx.queue(() => (job.labels ? ctx.store.saveJob(SAVED_KEY, structuredClone(savedLabels(job.labels))) : ctx.store.clearJob(SAVED_KEY))) : Promise.resolve());
   const sameFile = () => Boolean(job.file && job.labels && matchFile(job.labels, job.file).kind === 'same');
   const labelled = () => sameFile() && job.labels.roles !== null;
 

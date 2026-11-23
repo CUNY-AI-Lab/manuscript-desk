@@ -78,6 +78,25 @@ async function launch() {
 }
 
 const log = (...line) => console.log('ok -', ...line);
+// The keys of the work the page keeps in IndexedDB (creating the store as the page does, if absent).
+const savedKeys = page => page.evaluate(() => new Promise((resolve, reject) => {
+  const request = indexedDB.open('manuscript-desk', 1);
+  request.onupgradeneeded = () => request.result.createObjectStore('jobs');
+  request.onerror = () => reject(request.error);
+  request.onsuccess = () => {
+    const keys = request.result.transaction('jobs').objectStore('jobs').getAllKeys();
+    keys.onsuccess = () => { request.result.close(); resolve(keys.result); };
+    keys.onerror = () => reject(keys.error);
+  };
+}));
+// Waits for the saved copy to be written (or deleted) before a reload, which would cut it short.
+async function untilSaved(page, done, what) {
+  for (let tries = 0; tries < 50; tries += 1) {
+    if (done(await savedKeys(page))) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`the saved copy never ${what}`);
+}
 const browser = await launch();
 console.log(`# browser: ${browser.browserType().name()} ${browser.version()}`);
 const scratch = await mkdtemp(join(tmpdir(), 'formatter-smoke-'));
@@ -162,6 +181,7 @@ try {
   assert.equal(await page.locator('.rule').count(), 0);
   assert.equal(await page.locator('#sources li').count(), 0);
   assert.equal(await page.getByLabel('Monograph').isChecked(), false);
+  await untilSaved(page, keys => keys.length === 0, 'was deleted');
   await page.reload();
   await page.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
   assert.equal(await page.locator('.rule').count(), 0, 'nothing comes back after Start over');
@@ -229,11 +249,11 @@ try {
   await page.getByRole('button', { name: 'Edit' }).first().click();
   assert.equal(await page.getByLabel('Quotation marks').inputValue(), 'double');
   await page.getByLabel('Rule', { exact: true }).fill('');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   assert.equal(await page.locator('.rule-edit .field-error').textContent(), 'Write the rule in 1 to 500 characters.');
   await page.getByLabel('Rule', { exact: true }).fill('Use single quotation marks.');
   await page.getByLabel('Quotation marks').selectOption('single');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.locator('.rule-statement', { hasText: 'Use single quotation marks.' }).waitFor();
   log('Edit offers a menu for the setting; an empty rule is refused with a plain reason; a valid edit is saved');
 
@@ -386,7 +406,7 @@ try {
   await page6.getByRole('button', { name: 'Edit' }).waitFor();
   await page6.getByRole('button', { name: 'Edit' }).click();
   await page6.getByLabel('Rule', { exact: true }).fill('My own wording for quotation marks.');
-  await page6.getByRole('button', { name: 'Save' }).click();
+  await page6.getByRole('button', { name: 'Save', exact: true }).click();
   await page6.locator('.rule-statement', { hasText: 'My own wording for quotation marks.' }).waitFor();
   await page6.getByRole('switch', { name: 'Use this rule' }).uncheck();
   quotaGone = true;
@@ -569,6 +589,61 @@ try {
   await page8.locator('#error-banner', { hasText: 'notes.docx: This is not a Word (.docx) file.' }).waitFor();
   log('a file that is not a Word file gets the reader\'s plain message');
   await context8.close();
+
+  // ---- "Delete saved work now" ----
+  const context9 = await browser.newContext();
+  await mock(context9, route => json(route, { request_id: 'r', content: '{"rules":[]}' }));
+  const page9 = await context9.newPage();
+  watch(page9);
+  await page9.goto(pageUrl);
+  await page9.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page9.getByLabel('Article').check();
+  await page9.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
+  await page9.getByRole('button', { name: 'Add pasted text' }).click();
+  await page9.locator('#sources li', { hasText: 'Pasted text 1' }).waitFor();
+  await untilSaved(page9, keys => keys.includes('format'), 'was written');
+  await page9.reload();
+  await page9.locator('#sources li', { hasText: 'Pasted text 1' }).waitFor();
+  const asked9 = dialogs.length;
+  await page9.getByRole('button', { name: 'Delete saved work now' }).click();
+  await page9.locator('#work-notice', { hasText: 'The work kept in this browser was deleted' }).waitFor();
+  assert.equal(dialogs.length, asked9 + 1, 'a question first');
+  assert.equal(await page9.locator('#sources li').count(), 1, 'the work on the page stays');
+  assert.equal(await page9.getByRole('button', { name: 'Delete saved work now' }).isDisabled(), true);
+  assert.deepEqual(await savedKeys(page9), [], 'deleted when the page says so');
+  await page9.getByLabel('Monograph').check();
+  await page9.reload();
+  await page9.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  assert.equal(await page9.locator('#sources li').count(), 0, 'nothing was kept, before or after the deletion');
+  assert.equal(await page9.getByLabel('Monograph').isChecked(), false);
+  log('"Delete saved work now" deleted the saved copy after a question, left the work on the page, and kept nothing of later changes');
+  await context9.close();
+
+  // ---- The 24 hours run out while the page is open ----
+  const context10 = await browser.newContext();
+  await mock(context10, route => json(route, { request_id: 'r', content: '{"rules":[]}' }));
+  const page10 = await context10.newPage();
+  watch(page10);
+  await page10.clock.install();
+  await page10.goto(pageUrl);
+  await page10.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page10.getByLabel('Article').check();
+  await page10.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
+  await page10.getByRole('button', { name: 'Add pasted text' }).click();
+  await page10.locator('#sources li', { hasText: 'Pasted text 1' }).waitFor();
+  await untilSaved(page10, keys => keys.includes('format'), 'was written');
+  await page10.clock.fastForward('23:59:00');
+  assert.equal(await page10.locator('#sources li').count(), 1, 'kept within the 24 hours');
+  await page10.clock.fastForward('01:05');
+  await page10.locator('#work-notice', { hasText: 'because 24 hours passed since your last change' }).waitFor();
+  assert.equal(await page10.locator('#sources li').count(), 0, 'the work left the page too');
+  assert.equal(await page10.getByLabel('Article').isChecked(), false);
+  await untilSaved(page10, keys => keys.length === 0, 'was deleted');
+  await page10.reload();
+  await page10.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  assert.equal(await page10.locator('#sources li').count(), 0, 'and is not in this browser');
+  log('with the page left open, the work was deleted from the page and this browser just after 24 hours without a change, and the page said so');
+  await context10.close();
 
   assert.deepEqual(problems, [], 'no page errors or console errors');
   log('no page errors and no console errors');

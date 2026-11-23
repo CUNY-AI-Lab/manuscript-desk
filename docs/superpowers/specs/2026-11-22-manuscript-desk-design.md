@@ -422,17 +422,24 @@ is always downloadable. A lost session (`401`) must not cost the author paid wor
 The rule sheet and the findings so far are kept in the browser's IndexedDB,
 keyed by a hash of the file; the file itself is not. After signing in again
 the author picks the same file and the job resumes without repeating
-finished passages. This local copy is deleted on download, on "Clear", or
-after 24 hours (my call).
+finished passages. This local copy is kept after download, because authors
+download, look at the result in Word and come back to correct labels. It is
+deleted as one piece 24 hours after the last change, also while the page
+stays open (a timer, and a check whenever the page is shown again or regains
+focus; the page's own copy of the work goes with it), and at once on "Start
+over" or "Delete saved work now". After "Delete saved work now" nothing more
+is kept while that page stays open (settled 2026-11-23; earlier drafts said
+"deleted on download", which was never built).
 
 **Privacy statement on the page.** The file is opened in the browser and is
 not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to
 open-weight models under no-retention terms. Nothing is stored on the
-server. Work in progress is kept in this browser only, and is cleared when the
-finished manuscript is downloaded, when the author chooses Start over, or
-after 24 hours. The page states only what is true at each stage: until the
-marked-up file exists, it says "cleared when you choose Start over or after 24
-hours".
+server. Work in progress is kept in this browser only: the guidelines' text,
+the rule sheet, the paragraph labels and the author's corrections, with the
+manuscript's file name, never the manuscript or its text. Downloading does not delete it. It is deleted 24 hours
+after the last change, also while the page stays open, and at once when the
+author chooses Start over or Delete saved work now. The page says exactly
+this, and only what is true of what the code does.
 
 ## Testing and acceptance
 
@@ -501,8 +508,9 @@ Fable writes the implementation plan; Opus agents implement it.
 - Cost target of under $5 per monograph; default model `deepseek-v4.1-flash-1017` for reading guidelines.
 - Generality pass bar of 90 percent; real guidelines and manuscripts stay out
   of the repository.
-- Unfinished work is kept in the browser for up to 24 hours so a sign-in
-  round trip does not repeat paid passages.
+- Unfinished work is kept in the browser until 24 hours after the last change
+  so a sign-in round trip does not repeat paid passages, and is not deleted on
+  download.
 
 ## Open, for Stefano
 
