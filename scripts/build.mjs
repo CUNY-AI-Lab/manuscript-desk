@@ -1,5 +1,7 @@
 // Writes dist/, the Worker's static assets. MuPDF is copied from web/vendor/mupdf (npm run vendor)
-// and loaded at run time from vendor/mupdf/, never bundled.
+// and loaded at run time from vendor/mupdf/, never bundled. The guideline readers (with mammoth) are
+// their own output, shared/guidelines-extractors.js, which the Formatter page imports only when the
+// first file is added; it is external to the page script so mammoth is not bundled twice.
 import { build } from 'esbuild';
 import { cp, mkdir, readFile, rm } from 'node:fs/promises';
 
@@ -13,10 +15,11 @@ await mkdir('dist/shared', { recursive: true });
 await cp('web/index.html', 'dist/index.html');
 await cp('web/format/index.html', 'dist/format/index.html');
 await cp('web/shared/styles.css', 'dist/shared/styles.css');
+await cp('web/shared/cuny-ai-lab-logo.png', 'dist/shared/cuny-ai-lab-logo.png');
 await cp('web/vendor/mupdf', 'dist/vendor/mupdf', { recursive: true });
 await cp('LICENSE', 'dist/LICENSE.txt');
 await build({
   entryPoints: ['web/format/app.js', 'web/shared/pdf-worker.js', 'web/shared/guidelines-extractors.js'], outbase: 'web', outdir: 'dist',
   bundle: true, format: 'esm', platform: 'browser', sourcemap: true, target: ['es2022'], minify: false,
-  external: ['../vendor/mupdf/*'],
+  external: ['../vendor/mupdf/*', '../shared/guidelines-extractors.js'],
 });

@@ -27,14 +27,23 @@ node scripts/verify-release.mjs # check wrangler.toml keeps the Worker private a
 npx wrangler deploy --dry-run --outdir /tmp/cail-manuscript-dry   # offline bundle check
 ```
 
-The tests stub every upstream and never call a model. `tests/workerd.test.mjs` runs the bundled Worker in real workerd through Miniflare.
+The tests stub every upstream and never call a model.
+
+A browser smoke test of the built Formatter page, with the API mocked by request interception, lives in `tests/browser/` and is not part of `npm test` or `npm run check`. Playwright is not a dependency; point the script at any copy of it:
+
+```bash
+npm run build
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs node tests/browser/formatter-smoke.mjs
+```
+
+It uses Playwright's own Chromium if installed, otherwise the installed Google Chrome. `tests/workerd.test.mjs` runs the bundled Worker in real workerd through Miniflare.
 
 Layout:
 
 - `server/worker.js`: the Worker routes.
 - `web/`: the pages. `web/vendor/mupdf/` is written by `npm run vendor`.
 - `scripts/`: build, vendoring, local server and release check.
-- `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts.
+- `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
 
 ## Licence
 
