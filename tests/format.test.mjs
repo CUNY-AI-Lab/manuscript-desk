@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { strFromU8, unzipSync, zipSync } from 'fflate';
+import { DECLARED } from '../lib/format/declared.js';
 import { formatDocx } from '../lib/format/format.js';
 import { validateDocx } from '../lib/docx/validate.js';
 import { readPackage } from '../lib/docx/write.js';
@@ -240,4 +241,18 @@ test('a part the stage cannot work with is a typed failure, not an exception', (
   assert.deepEqual(Object.keys(formatDocx({ bytes: broken, roles })), ['ok', 'code', 'message']);
   assert.equal(formatDocx({ bytes: broken, roles }).code, 'unreadable');
   assert.equal(formatDocx().code, 'not_docx');
+});
+
+test('every declared change says where it was made, by source paragraph; the report lists the figures', () => {
+  const { result, roles } = format([RULES.restart, RULES.numbered, RULES.split, RULES.markers]);
+  const places = kind => result.report.declared.find(entry => entry.kind === kind)?.places ?? [];
+  const headings = Object.entries(roles).filter(([, role]) => role === 'heading-1').map(([index]) => Number(index));
+  assert.deepEqual(places(DECLARED.headingNumbers), headings);
+  assert.deepEqual(places(DECLARED.titleSplit), [3], 'the first chapter\'s title, split at its colon');
+  const quotation = Object.entries(roles).filter(([, role]) => role === 'block-quotation').map(([index]) => Number(index)).pop() - 3;
+  assert.deepEqual(places(DECLARED.linesJoined), [quotation, quotation], 'two lines joined into the first line of the quotation');
+  assert.deepEqual(places(DECLARED.breakAdded), [result.report.chapters[1].first]);
+  assert.ok(places(DECLARED.emptyRemoved).length === declared(result, DECLARED.emptyRemoved));
+  assert.deepEqual(result.report.figures.map(({ label, placeholder }) => ({ label, placeholder })), [{ label: '1.1', placeholder: true }]);
+  assert.deepEqual(places(DECLARED.markerRewritten), [result.report.figures[0].index]);
 });
