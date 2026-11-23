@@ -4,7 +4,12 @@
 // the hand-formatted reference, paragraph by paragraph, through an explicit map from the
 // formatter's style names to the reference's.
 //
-//   npm run format-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all|<keys>] [--pdf]
+//   npm run format-eval -- [--case <folder>] [--predicted | --roles <file>] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all|<keys>] [--score <file>] [--pdf]
+//
+// With --score, an output made elsewhere (by the Formatter page, say) is measured instead of the
+// script's own: the script formats the source with the same roles and sheet to learn where each
+// output paragraph came from, checks that the given file has the same paragraphs in the same order
+// with the same text, and then measures the given file.
 //
 // A case is a folder under manuscripts/ in MANUSCRIPT_DESK_GUIDELINES (default
 // ../manuscript-desk-guidelines) holding source.docx, gold-roles.json and reference/ with the
@@ -36,7 +41,7 @@ const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
 const DEFAULT_FOLDER = fileURLToPath(new URL('../../manuscript-desk-guidelines', import.meta.url));
 const DEFAULT_MAP = fileURLToPath(new URL('../docs/eval/brill-style-map.json', import.meta.url));
 
-const USAGE = `Usage: npm run format-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all|<keys>] [--map <file>] [--guidelines <folder>] [--pdf]
+const USAGE = `Usage: npm run format-eval -- [--case <folder>] [--predicted | --roles <file>] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all|<keys>] [--map <file>] [--guidelines <folder>] [--score <file>] [--pdf]
 
 Formats manuscripts/<case>/source.docx in MANUSCRIPT_DESK_GUIDELINES (default ../manuscript-desk-guidelines)
 and compares it with the formatted .docx in its reference/ folder.
@@ -46,6 +51,8 @@ and compares it with the formatted .docx in its reference/ folder.
   --chapters    the chapters to report: dev (the default), holdout, all, or keys separated by commas
   --map         the style map (default docs/eval/brill-style-map.json)
   --guidelines  the guidelines folder for --sheet extracted (default brill)
+  --roles       roles from a file ({"roles": {"<index>": "<role>"}}, as the Formatter page keeps them)
+  --score       measure this formatted .docx (made with the same roles and sheet) instead of the script's own output
   --pdf         also convert the output to PDF with LibreOffice (soffice), if installed, to see that it opens
 Model calls are made only when a cache is missing, with the key in CAIL_API_KEY, which pays for them.`;
 
@@ -306,7 +313,7 @@ async function pdfSmoke(file) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, map: { type: 'string' }, guidelines: { type: 'string' }, pdf: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, roles: { type: 'string' }, sheet: { type: 'string' }, chapters: { type: 'string' }, map: { type: 'string' }, guidelines: { type: 'string' }, score: { type: 'string' }, pdf: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -337,7 +344,12 @@ async function main(argv, environment, { out = console.log, err = console.error 
   // Roles.
   let roles = gold.gold;
   let rolesNote = 'gold roles';
-  if (values.predicted) {
+  if (values.roles) {
+    const given = await readJson(path.resolve(values.roles));
+    if (!given?.roles || typeof given.roles !== 'object') { err('The roles file holds no roles.'); return 1; }
+    roles = given.roles;
+    rolesNote = 'roles from the given file';
+  } else if (values.predicted) {
     const needsCall = !(await readJson(path.join(work, 'predicted-roles.json')))?.roles;
     const predicted = await predictedRoles({ work, paragraphs: read.paragraphs, environment, usage, rows: needsCall ? await catalog() : new Map(), log: err });
     roles = predicted.roles;
@@ -359,14 +371,27 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const formatted = formatDocx({ bytes: source, roles, sheet: checked.sheet });
   if (!formatted.ok) { err(`The formatter stopped: ${formatted.code}.`); return 1; }
   const seconds = (performance.now() - start) / 1000;
-  const outputFile = path.join(work, `output-${values.predicted ? 'predicted' : 'gold'}-${sheetChoice === 'hand' || sheetChoice === 'extracted' ? sheetChoice : 'sheet'}.docx`);
-  await writeFile(outputFile, formatted.bytes);
   const { report } = formatted;
-  const validity = validateDocx(formatted.bytes);
+  let measured = formatted.bytes;
+  let outputFile;
+  if (values.score) {
+    outputFile = path.resolve(values.score);
+    measured = new Uint8Array(await readFile(outputFile));
+    // The given file must be this formatting: the same paragraphs, in the same order, with the same text.
+    const ours = readUnits(formatted.bytes).units;
+    const theirs = readUnits(measured).units;
+    const same = ours.length === theirs.length && ours.every((unit, at) => unit.text === theirs[at].text && unit.styleName === theirs[at].styleName);
+    if (!same) { err(`The file to score is not this formatting of the source (${theirs.length} paragraphs against ${ours.length}, or different text or styles); give the same roles and sheet.`); return 1; }
+    out(`Scoring ${path.basename(outputFile)}: the same ${theirs.length} paragraphs, text and styles as the script's own formatting with these roles and this sheet.`);
+  } else {
+    outputFile = path.join(work, `output-${values.predicted ? 'predicted' : values.roles ? 'given' : 'gold'}-${sheetChoice === 'hand' || sheetChoice === 'extracted' ? sheetChoice : 'sheet'}.docx`);
+    await writeFile(outputFile, formatted.bytes);
+  }
+  const validity = validateDocx(measured);
 
   const sourcePackage = readPackage(source);
   const sourceWords = documentWords(sourcePackage.files, sourcePackage.main);
-  const outputRead = readUnits(formatted.bytes);
+  const outputRead = readUnits(measured);
   const referenceRead = readUnits(referenceBytes);
   const outputWords = documentWords(outputRead.files, outputRead.main);
   const referenceWords = documentWords(referenceRead.files, referenceRead.main);
@@ -433,7 +458,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const rejected = compareWords(sourceWords, documentWords(outputRead.files, outputRead.main, { rejected: true }), []);
   out(`Tracked changes: ${validity.counts.revisions}; with all of them rejected, words differing from the source: removed ${rejected.removed}, added ${rejected.added}.`);
   out(`Validity: ${validity.ok ? 'valid' : `INVALID (${validity.problems.map(problem => `${problem.code} in ${problem.part} x${problem.count}`).join(', ')})`}; ${validity.counts.parts} parts, ${validity.counts.footnoteReferences} note references.`);
-  out(`Output written to the case's work/ folder as ${path.basename(outputFile)}.`);
+  out(values.score ? `Scored ${path.basename(outputFile)}.` : `Output written to the case's work/ folder as ${path.basename(outputFile)}.`);
   if (values.pdf) out(`LibreOffice: ${await pdfSmoke(outputFile)}.`);
   if (usage.calls) {
     const cost = costOf(usage, rows?.get(DEFAULT_MODEL));
