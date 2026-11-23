@@ -19,7 +19,7 @@ import { SAVED_KEY as FORMATTER_LABELS } from '../format/manuscript-state.js';
 import { el } from '../format/rules-view.js';
 import { renderTermEditor, PAGE_SIZE } from './terms-view.js';
 import {
-  DEFAULT_SETTINGS, SAVED_KEY, STORE_NAME, addEntries, editEntry, entriesFromText, indexEntries, mergeEntries, restoredState,
+  DEFAULT_SETTINGS, JUDGE_SCOPES, SAVED_KEY, STORE_NAME, addEntries, defaultJudgeScope, judgeScopes, editEntry, entriesFromText, indexEntries, mergeEntries, restoredState,
   savedState, setStatus, settingsFromSheet, termListFile, termsPlan, workingList,
 } from './state.js';
 
@@ -87,7 +87,7 @@ function start() {
   };
   // Held in memory only: the manuscript's paragraphs, the PDF's page texts, the match.
   // `open`: the groups the author opened, kept open when the page is drawn again.
-  const job = { open: new Set(), manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: { status: 'all', kind: 'all', search: '', limit: PAGE_SIZE, mergeFrom: null } };
+  const job = { open: new Set(), manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: { status: 'all', kind: 'all', search: '', limit: PAGE_SIZE, mergeFrom: null, below: false, order: 'rank' } };
   const reader = createReader();
   let store = null;
   try { if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB, name: STORE_NAME }); } catch {}
@@ -146,7 +146,8 @@ function start() {
         announce(added.added ? 'Entry added.' : 'That entry is already in the list.');
       },
       view: change => { Object.assign(job.view, change); render(); },
-    });
+      filter: change => { state.settings.filter = { ...state.settings.filter, ...change }; job.view.limit = PAGE_SIZE; changed(); },
+    }, state.settings.filter);
     $('download-list').disabled = !workingList(state.entries).length;
     $('propose-button').disabled = running || !job.manuscript || !model();
     $('propose-stop').hidden = state.running?.kind !== 'propose';
@@ -207,18 +208,29 @@ function start() {
     $('ranges-area').replaceChildren(...children);
   }
 
-  // The entries the judge reads: those the matcher marked, with the reasons.
-  const ambiguousEntries = () => (job.match ? workingList(state.entries).filter(entry => job.match.reasons.has(entry.id) && (job.match.byEntry.get(entry.id)?.hits.length ?? 0) > 0) : []);
+  // The entries the judge reads: in the scope the author chose (marked, flagged by the tool, or both).
+  const scopes = () => (job.match ? judgeScopes(workingList(state.entries), job.match.reasons, job.match.byEntry) : { marked: [], flagged: [], both: [] });
+  const judgeScope = () => { const all = scopes(); return JUDGE_SCOPES.includes(job.judgeScope) ? job.judgeScope : defaultJudgeScope(all); };
+  const ambiguousEntries = () => scopes()[judgeScope()];
+  const judgedPlan = entries => (job.match ? judgePlan('ambiguous', entries, job.match.byEntry, entry => ({ reasons: job.match.reasons.get(entry.id) })) : { hits: 0, calls: 0 });
   const subentryEntries = () => (job.match ? workingList(state.entries).filter(entry => entry.subentries.length && (job.match.byEntry.get(entry.id)?.hits.length ?? 0) > 0) : []);
 
   function renderJudge() {
     const entries = ambiguousEntries();
     const running = state.running !== null;
-    const plan = job.match ? judgePlan('ambiguous', entries, job.match.byEntry, entry => ({ reasons: job.match.reasons.get(entry.id) })) : { hits: 0, calls: 0 };
+    const plan = judgedPlan(entries);
+    const all = scopes();
+    const scopeLabels = { marked: 'The entries you marked ambiguous', flagged: 'The entries the tool flags', both: 'Both' };
+    $('judge-scope').replaceChildren(...JUDGE_SCOPES.map(scope => {
+      const scoped = judgedPlan(all[scope]);
+      return el('option', { value: scope, text: `${scopeLabels[scope]}: ${plural(all[scope].length, 'entry', 'entries')}, ${plural(scoped.calls, 'call', 'calls')}`, selected: scope === judgeScope() });
+    }));
+    $('judge-scope').disabled = running || !job.match;
     $('judge-button').disabled = running || !plan.calls || !model();
     $('judge-button').textContent = plan.calls ? `Judge ${plural(plan.hits, 'hit', 'hits')} of ${plural(entries.length, 'entry', 'entries')} in context (${plural(plan.calls, 'call', 'calls')})` : 'Judge the hits in context';
     if (!job.match) { $('judge-area').replaceChildren(); return; }
-    if (!entries.length) { $('judge-area').replaceChildren(el('p', { className: 'help', text: 'No entry looks ambiguous.' })); return; }
+    if (!all.both.length) { $('judge-area').replaceChildren(el('p', { className: 'help', text: 'No entry looks ambiguous.' })); return; }
+    if (!entries.length) { $('judge-area').replaceChildren(el('p', { className: 'help', text: judgeScope() === 'marked' ? 'You have marked no entry with hits as ambiguous. Tick “Ambiguous” on an entry, or choose the entries the tool flags.' : 'The tool flags no entry with hits.' })); return; }
     const items = entries.map(entry => {
       const found = job.match.byEntry.get(entry.id);
       const decided = found.hits.filter(hit => state.decisions[hit.id]);
@@ -228,7 +240,7 @@ function start() {
         const keep = hit.id in state.overrides ? state.overrides[hit.id] : !(applied && state.decisions[hit.id].keep === false);
         return el('li', { className: 'review-item' },
           el('p', { className: 'review-excerpt' }, `p. ${hit.page}: ${hit.context?.before ?? ''}`, el('mark', { text: hit.context?.match ?? hit.matched }), hit.context?.after ?? ''),
-          el('p', { className: 'review-note', text: `Model: ${state.decisions[hit.id].keep ? 'keep' : 'drop'}${state.decisions[hit.id].reason ? ` (${state.decisions[hit.id].reason})` : ''}` }),
+          el('p', { className: 'review-note', text: `Model: ${state.decisions[hit.id].keep ? 'keep' : 'drop'}${state.decisions[hit.id].reason ? ` (${state.decisions[hit.id].reason})` : ''}${state.decisions[hit.id].evidence ? `, because of “${state.decisions[hit.id].evidence}”` : ''}` }),
           el('label', { className: 'check' }, el('input', { type: 'checkbox', checked: keep, onchange: event => { state.overrides[hit.id] = event.target.checked; changed(); } }), 'Keep this hit'));
       });
       return el('details', { className: 'review-chapter', open: job.open.has(`judge:${entry.id}`), ontoggle: event => { job.open[event.target.open ? 'add' : 'delete'](`judge:${entry.id}`); } },
@@ -398,8 +410,8 @@ function start() {
   }
 
   async function judge({ only } = {}) {
-    const entries = ambiguousEntries();
-    const plan = judgePlan('ambiguous', entries, job.match.byEntry, entry => ({ reasons: job.match.reasons.get(entry.id) }));
+    const entries = only ? scopes().both : ambiguousEntries();
+    const plan = judgedPlan(entries);
     if (!only && !confirm(`Judge ${plural(plan.hits, 'hit', 'hits')} in context? This makes ${plural(plan.calls, 'model call', 'model calls')}.`)) return;
     await running('judge', 'helper-progress', async (signal, onProgress) => {
       const result = await runJudge({ task: 'ambiguous', entries, byEntry: job.match.byEntry, model: model(), callJudge, reasons: job.match.reasons, only, signal, onProgress, onResult: (_, parsed) => { for (const [id, answer] of parsed) state.decisions[id] = answer; } });
@@ -517,7 +529,7 @@ function start() {
 
   function clearWork() {
     state.running?.abort();
-    Object.assign(state, { entries: [], settings: { ...DEFAULT_SETTINGS }, proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} });
+    Object.assign(state, { entries: [], settings: { ...DEFAULT_SETTINGS, filter: { ...DEFAULT_SETTINGS.filter } }, proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} });
     Object.assign(job, { manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] } });
     $('paste-box').value = '';
     $('pdf-file').value = '';
@@ -611,6 +623,7 @@ function start() {
   $('ranges-button').addEventListener('click', () => void findRanges());
   for (const kind of ['ranges', 'judge', 'sort']) $(`${kind}-stop`).addEventListener('click', () => state.running?.abort());
   $('judge-button').addEventListener('click', () => void judge());
+  $('judge-scope').addEventListener('change', event => { job.judgeScope = event.target.value; render(); });
   $('sort-button').addEventListener('click', () => void sortHits());
   $('load-sheet').addEventListener('click', () => $('sheet-file').click());
   $('sheet-file').addEventListener('change', async event => { const [file] = event.target.files; event.target.value = ''; if (file) await loadSheet(file); });

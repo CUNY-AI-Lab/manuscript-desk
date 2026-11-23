@@ -78,6 +78,9 @@
 
 <h3>Ambiguous terms</h3>
 <p class="help">Entries whose hits may not all mean the entry: marked by you, a capitalized term found in lower case, a short abbreviation, a word another entry also searches for, a surname shared by people in the list, hits inside another entry’s longer hit. A model can read each hit with the words around it and propose keeping or dropping it, with a reason. Nothing is dropped until you apply it, and you can change each one.</p>
+<label for="judge-scope">Which entries to judge</label>
+<select id="judge-scope" disabled aria-describedby="judge-scope-help"></select>
+<p id="judge-scope-help" class="help">Each choice says how many model calls it makes. Mark an entry “Ambiguous” in the term list to judge only the ones you choose.</p>
 <div class="panel-actions"><button id="judge-button" class="button secondary" type="button" disabled>Judge the hits in context</button><button id="judge-stop" class="button secondary" type="button" hidden>Stop</button></div>
 <div id="judge-area"></div>
 

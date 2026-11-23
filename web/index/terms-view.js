@@ -1,24 +1,36 @@
 // Draws the term list editor: a filter, the entries with their status, heading, other forms, kind,
 // count in the manuscript, subentries and cross-references, and the controls to accept, drop,
-// rename, merge, mark ambiguous and add. Every text from the manuscript, a file or a model is set
-// with textContent (through el). Nothing runs at import time.
+// rename, merge, mark ambiguous and add. Proposals are ranked and those below the author's threshold
+// (lib/index/rank.js) are hidden until asked for. Every text from the manuscript, a file or a model is
+// set with textContent (through el). Nothing runs at import time.
 
 import { el } from '../format/rules-view.js';
 import { headingOf, variantsOf } from '../../lib/index/termlist.js';
 import { KINDS } from '../../lib/index/terms.js';
+import { DEFAULT_FILTER, PAGE_CHOICES, passesFilter, rankEntries } from '../../lib/index/rank.js';
 
 export const PAGE_SIZE = 150;
 const STATUS_LABELS = { proposed: 'To review', accepted: 'Accepted', dropped: 'Dropped' };
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 const split = text => text.split(/[,;]/).map(part => part.trim()).filter(Boolean);
 
-/** The entries a view shows, in list order. */
-export function shownEntries(list, { status = 'all', kind = 'all', search = '' } = {}) {
+/**
+ * The entries a view shows: by status, kind and search, then, unless `below` asks for them, without
+ * the proposals under the filter's threshold; ranked (lib/index/rank.js) or in list order.
+ * @returns {{ shown: object[], below: number }} below: the proposals the threshold hides
+ */
+export function viewEntries(list, { status = 'all', kind = 'all', search = '', below = false, order = 'rank' } = {}, filter = DEFAULT_FILTER) {
   const needle = search.trim().toLowerCase();
-  return list.filter(entry => (status === 'all' || entry.status === status)
+  const matching = list.filter(entry => (status === 'all' || entry.status === status)
     && (kind === 'all' || (kind === 'name' ? entry.section === 'names' : entry.kind === kind))
     && (!needle || entry.text.toLowerCase().includes(needle)));
+  const passing = matching.filter(entry => passesFilter(entry, filter));
+  const shown = below ? matching : passing;
+  return { shown: order === 'rank' ? rankEntries(shown) : shown, below: matching.length - passing.length };
 }
+
+/** The entries a view shows (the threshold aside), in list order. */
+export const shownEntries = (list, view = {}) => viewEntries(list, { ...view, below: true, order: 'list' }).shown;
 
 function row(entry, view, on) {
   const merging = view.mergeFrom && view.mergeFrom !== entry.id;
@@ -26,7 +38,14 @@ function row(entry, view, on) {
   const variants = el('input', { type: 'text', value: variantsOf(entry.text).join(', '), 'aria-label': `Other forms of ${headingOf(entry.text)}, separated by commas`, className: 'term-variants', onchange: event => on.edit(entry.id, { variants: split(event.target.value) }) });
   const section = el('select', { 'aria-label': 'Searched as', onchange: event => on.edit(entry.id, { section: event.target.value }) },
     el('option', { value: 'terms', text: 'Term', selected: entry.section === 'terms' }), el('option', { value: 'names', text: 'Name (Last, First)', selected: entry.section === 'names' }));
-  const facts = [entry.kind, Number.isInteger(entry.count) ? `${plural(entry.count, 'time', 'times')} in the manuscript` : null, entry.count === 0 ? 'not found by its own forms: add the form the text uses' : null].filter(Boolean);
+  const facts = [
+    entry.kind,
+    Number.isInteger(entry.count) ? `${plural(entry.count, 'time', 'times')} in the manuscript` : null,
+    Number.isInteger(entry.spread) && entry.count > 0 ? `on about ${plural(entry.spread, 'page', 'pages')}` : null,
+    entry.discussed > 0 ? `discussed in ${plural(entry.discussed, 'passage', 'passages')}` : null,
+    entry.inHeading ? 'in a heading' : null,
+    entry.count === 0 ? 'not found by its own forms: add the form the text uses' : null,
+  ].filter(Boolean);
   const details = el('details', { className: 'term-details' },
     el('summary', { text: `Subentries and cross-references${entry.subentries.length || entry.see.length || entry.seeAlso.length ? ` (${entry.subentries.length + entry.see.length + entry.seeAlso.length})` : ''}` }),
     el('label', { text: 'Subentries, one per line, with other forms in parentheses' }),
@@ -53,18 +72,20 @@ function row(entry, view, on) {
 /**
  * @param {HTMLElement} container
  * @param {object[]} list
- * @param {{ status, kind, search, limit, mergeFrom }} view
- * @param {{ status: Function, edit: Function, merge: Function, add: Function, view: Function }} on
+ * @param {{ status, kind, search, limit, mergeFrom, below, order }} view
+ * @param {{ status: Function, edit: Function, merge: Function, add: Function, view: Function, filter: Function }} on
+ * @param {{ concepts: number, names: number }} filter the thresholds, kept with the settings
  */
-export function renderTermEditor(container, list, view, on) {
+export function renderTermEditor(container, list, view, on, filter = DEFAULT_FILTER) {
   if (!list.length) {
     container.replaceChildren(el('p', { className: 'help', text: 'No terms yet. Load a term list, paste one, or propose terms from the manuscript.' }), addForm(on));
     return;
   }
   const counts = { proposed: 0, accepted: 0, dropped: 0 };
   for (const entry of list) counts[entry.status] = (counts[entry.status] ?? 0) + 1;
-  const shown = shownEntries(list, view);
+  const { shown, below } = viewEntries(list, view, filter);
   const visible = shown.slice(0, view.limit ?? PAGE_SIZE);
+  const proposals = counts.proposed;
   const mergeName = view.mergeFrom ? headingOf(list.find(entry => entry.id === view.mergeFrom)?.text ?? '') : null;
   container.replaceChildren(
     el('p', { className: 'term-counts', text: `${plural(list.length, 'entry', 'entries')}: ${counts.accepted.toLocaleString('en-US')} accepted, ${counts.proposed.toLocaleString('en-US')} to review, ${counts.dropped.toLocaleString('en-US')} dropped. The index and the downloaded list hold the accepted entries.` }),
@@ -74,7 +95,21 @@ export function renderTermEditor(container, list, view, on) {
         ...['all', 'proposed', 'accepted', 'dropped'].map(value => el('option', { value, text: value === 'all' ? 'All' : STATUS_LABELS[value], selected: (view.status ?? 'all') === value }))),
       el('select', { 'aria-label': 'Kind', onchange: event => on.view({ kind: event.target.value, limit: PAGE_SIZE }) },
         ...['all', 'name', ...KINDS].map(value => el('option', { value, text: value === 'all' ? 'Every kind' : value === 'name' ? 'Names' : value, selected: (view.kind ?? 'all') === value }))),
-      el('input', { type: 'search', placeholder: 'Find', 'aria-label': 'Find an entry', value: view.search ?? '', onchange: event => on.view({ search: event.target.value, limit: PAGE_SIZE }) })),
+      el('input', { type: 'search', placeholder: 'Find', 'aria-label': 'Find an entry', value: view.search ?? '', onchange: event => on.view({ search: event.target.value, limit: PAGE_SIZE }) }),
+      el('select', { 'aria-label': 'Order', onchange: event => on.view({ order: event.target.value }) },
+        el('option', { value: 'rank', text: 'Ranked', selected: (view.order ?? 'rank') === 'rank' }), el('option', { value: 'list', text: 'In list order', selected: view.order === 'list' }))),
+    proposals ? el('fieldset', { className: 'plain review-filter threshold' },
+      el('legend', { text: 'Which proposals to show, by the pages of the manuscript they are on' }),
+      el('label', { for: 'threshold-concepts', text: 'Concepts on at least' }),
+      el('select', { id: 'threshold-concepts', onchange: event => on.filter({ concepts: Number(event.target.value) }) },
+        ...PAGE_CHOICES.map(pages => el('option', { value: String(pages), text: pages === 1 ? '1 page (every concept)' : `${pages} pages`, selected: filter.concepts === pages }))),
+      el('label', { for: 'threshold-names', text: 'Names (people, places, organizations, works, events) on at least' }),
+      el('select', { id: 'threshold-names', onchange: event => on.filter({ names: Number(event.target.value) }) },
+        ...PAGE_CHOICES.map(pages => el('option', { value: String(pages), text: pages === 1 ? '1 page (every name)' : `${pages} pages`, selected: filter.names === pages }))),
+      el('p', { className: 'help', id: 'threshold-status', text: below
+        ? `${plural(below, 'proposal is', 'proposals are')} below this and not shown. They stay in the list.`
+        : view.below ? 'Every proposal is shown, those below the thresholds too.' : 'Every proposal passes this.' }),
+      below || view.below ? el('button', { type: 'button', className: 'button secondary', id: 'threshold-toggle', text: view.below ? 'Hide the proposals below the thresholds' : `Show the ${plural(below, 'proposal', 'proposals')} below the thresholds`, onclick: () => on.view({ below: !view.below, limit: PAGE_SIZE }) }) : null) : '',
     el('div', { className: 'row-actions' },
       el('button', { type: 'button', className: 'button secondary', text: `Accept the ${plural(shown.length, 'entry', 'entries')} shown`, onclick: () => on.status(shown.map(entry => entry.id), 'accepted') }),
       el('button', { type: 'button', className: 'button secondary', text: `Drop the ${plural(shown.length, 'entry', 'entries')} shown`, onclick: () => on.status(shown.map(entry => entry.id), 'dropped') })),
