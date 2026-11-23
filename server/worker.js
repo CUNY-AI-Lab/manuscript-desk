@@ -1,5 +1,8 @@
 import { CAIL_CANONICAL_ISSUER, loadIdentityVerifierConfig, readIdentityKeyring, verifyIdentityJwt, verifyKeyringGatewayJwt } from '@cuny-ai-lab/cail-identity';
 import { CailError, createCailClient } from '@cuny-ai-lab/cail-client';
+import { DOC_TYPES } from '../lib/rules/schema.js';
+import { modelControls } from './model.js';
+import { GROUPS, rulesPrompt } from './prompts.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -8,6 +11,10 @@ const MOUNT = '/manuscript';
 const LAUNCH_PATH = '/launch/manuscript';
 const MAX_BODY = 1024 * 1024;
 const DEADLINE_MS = 180000;
+// The browser splits guidelines into parts of about 40,000 characters; this leaves room for overlap.
+const MAX_GUIDELINES_CHARS = 60000;
+// Room for one group's rules from one part of the guidelines.
+const RULES_OUTPUT_TOKENS = 6000;
 const CATALOG_CACHE_MS = 10 * 60 * 1000;
 const CATALOG_RETRY_MS = 30000;
 const CATALOG_TIMEOUT_MS = 5000;
@@ -138,6 +145,25 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
       if (path === '/api/session' && request.method === 'GET') return json({ authenticated: true });
       if (path === '/api/quota' && request.method === 'GET') return json(await client.getQuota(credential, { signal }));
       if (path === '/api/catalog' && request.method === 'GET') return json(await client.getCatalogSnapshot({ modality: 'all', signal }));
+      if (path === '/api/rules' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph or an edited collection.');
+        if (!GROUPS.includes(body.group)) throw new AppError('invalid_request', 'The request named a part of the guidelines this tool does not read. Reload the page and try again.');
+        // The text is never echoed in an error, logged or stored.
+        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
+        const payload = { model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: rulesPrompt({ docType: body.docType, group: body.group }) }, { role: 'user', content: body.text }], ...modelControls(await catalogRow(model, signal), RULES_OUTPUT_TOKENS) };
+        const correlation = { request_id: requestId, trace_id: crypto.randomUUID().replaceAll('-', ''), span_id: crypto.randomUUID().replaceAll('-', '').slice(0, 16), trace_flags: 0 };
+        const response = await client.chatCompletions(payload, credential, { signal, correlation });
+        let data;
+        try { data = JSON.parse(await boundedText(response)); } catch (error) { if (error instanceof AppError) throw error; throw new AppError('invalid_model_response', 'The model returned a response this tool could not read. Try again, or choose another model.', 502); }
+        const choice = data?.choices?.[0];
+        if (choice?.finish_reason === 'length') throw new AppError('model_output_limit', 'The model ran out of room before it finished reading this part of the guidelines. Try again, or choose another model.', 502);
+        const content = choice?.message?.content;
+        if (typeof content !== 'string' || !content.trim()) throw new AppError('invalid_model_response', 'The model returned an empty answer. Try again, or choose another model.', 502);
+        return json({ content, request_id: requestId });
+      }
       if (path.startsWith('/api/')) throw new AppError('not_found', 'Not found.', 404);
       if (!env.ASSETS || !['GET', 'HEAD'].includes(request.method)) throw new AppError('not_found', 'Not found.', 404);
       const assetURL = new URL(request.url);
