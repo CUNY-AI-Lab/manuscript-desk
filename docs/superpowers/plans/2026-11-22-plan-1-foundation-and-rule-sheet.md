@@ -22,7 +22,7 @@
 - The Worker stores nothing and logs no request bodies, prompts, guideline text or identifiers.
 - No retries in the Worker. The browser retries a call only when the response header `x-should-retry` is `true`, at most once.
 - Model output and guideline text are rendered with `textContent`, never `innerHTML`.
-- Default model id `glm-5.3`; if the menu does not offer it, the first offered row.
+- Default model id `deepseek-v4.1-flash-1017` (changed from `glm-5.3` after measurement during execution); if the menu does not offer it, the first offered row.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push, create a remote, or deploy.
 - Real publisher guidelines and manuscripts are never committed. Test fixtures are text written for the tests.
 
@@ -566,3 +566,8 @@ test('htmlToText drops script, style and navigation and keeps paragraph text', .
 ## Done when
 
 `npm run check` passes; `wrangler deploy --dry-run` succeeds; Task 9 Step 5 was performed or reported as not performed; no file under `web/` assigns HTML strings; and `git log` shows one commit per task. Deployment, the Doorway mount and the GitHub repository are separate, explicitly requested steps.
+
+
+## Executed
+
+Completed 2026-11-22 on branch `plan-1-foundation`. Changes made during execution, each reviewed: Task 11 added (PDF text extraction keeps the spaces between words); the quotation check requires whole-word matches; slot-less duplicate removal narrowed to same category, mode and quotation; the page's sign-in-free dev run (Task 9 Step 5) replaced by a browser smoke test with mocked API; six whole-branch review findings fixed (loaded sheets marked unverified, named manual verified, settings shown on rows, failed re-read keeps the sheet, failure reasons shown and saved, trailing-slash redirect).

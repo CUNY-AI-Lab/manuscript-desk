@@ -388,30 +388,26 @@ its recommended text models between $0.10 and $1.40 per million input tokens,
 so a monograph costs roughly $0.20 on GPT OSS 120B and about $1 on the most
 expensive row; cost does not constrain the choice.
 
-Defaults, from a first comparison of nine Gateway models on 2026-11-22 (one
-run each, so indicative): the real Brill author guide and editor's note, three
-chapters of a real edited volume whose paragraph roles had been set by hand,
-and a passage with 18 planted style errors.
+Default for reading guidelines: `deepseek-v4.1-flash-1017`. Measured on
+2026-11-22 with the product's own code (`npm run generality`) on the Brill case
+(the editor's note plus the author guide, 25 requirements listed by hand): it
+found 25 of 25 in three runs out of three, at about 4 cents a run. `kimi-k3`
+found 21 to 23 at eight times the price, `mistral-large-3` 20, `glm-5.3` 19,
+`gpt-oss-120b` and `gemma-4-26b` 16, and `inkling-2-small` ran out of output
+room on five of nine calls. An earlier hand-rolled comparison had favoured
+`glm-5.3`; it was misleading, because the PDF reader was then dropping the
+spaces between words on tightly set lines and models that restored them had
+their quotations rejected. One case is not the generality set: the default is
+confirmed or replaced when the other cases have expected rule sheets.
 
-- **Reading guidelines and labelling paragraph roles: `glm-5.3`.** It found
-  19 of 20 known Brill requirements with 46 of 58 quotations verbatim, and
-  labelled 226 of 240 paragraphs correctly in the hardest chapter. `kimi-k3`
-  was marginally better (20 of 20) at about two and a half times the price
-  and sits in the advanced tier. `gpt-oss-120b`, the earlier draft default,
-  was clearly worse (16 of 20, a third of its quotations not verbatim, 167 of
-  240 roles).
-- **Reviewing passages: a reasoning model with thinking left on.** With
-  thinking on, `inkling-2-small`, `deepseek-v4.1-flash-1017` and `kimi-k3`
-  each found 18 of 18 planted errors with no false alarms; with the
-  low-effort settings the Bibliography Converter uses, the best recommended
-  model found 14. Thinking matters more than the model here. Draft default
-  `inkling-2-small` with thinking on (about half a cent per passage, roughly
-  $1.20 for a monograph); `glm-5.3` with thinking on returned empty replies
-  in this test and needs its own settings worked out before it is judged.
+Paragraph roles and passage review (later plans) have only the first
+comparison to go on: `glm-5.3`, `inkling-2-small`, `deepseek-v4.1-flash-1017`
+and `kimi-k3` all labelled about 94 percent of a hard chapter's paragraphs
+correctly, and passage review found all 18 planted errors only with thinking
+left on. Their defaults are to be measured the same way before they are fixed.
 
-These are confirmed or replaced by the generality set before release. The
-menu still follows the catalog; a default falls back to the first offered row
-if its model leaves the menu.
+The menu follows the catalog; a default falls back to the first offered row if
+its model leaves the menu.
 
 **Failure handling.** A passage that fails is retried only when the Gateway
 says to, then marked failed; the job continues, and the summary lists failed
@@ -496,7 +492,7 @@ Fable writes the implementation plan; Opus agents implement it.
 - Input with unresolved tracked changes is refused.
 - Text inside live fields is never edited.
 - Baselines are small (checker rules only) and spot-checked by Stefano.
-- Cost target of under $5 per monograph; default models `glm-5.3` (guidelines, roles) and `inkling-2-small` with thinking on (passage review).
+- Cost target of under $5 per monograph; default model `deepseek-v4.1-flash-1017` for reading guidelines.
 - Generality pass bar of 90 percent; real guidelines and manuscripts stay out
   of the repository.
 - Unfinished work is kept in the browser for up to 24 hours so a sign-in
