@@ -57,8 +57,8 @@ test('batches number each hit, mark it and give its page; answers count only for
   const { entries } = parseTermList('Names:\nBush\n');
   const { byEntry } = findHits(BOOK, entries);
   const [batch] = buildBatches('ambiguous', entries[0], byEntry.get(entries[0].id).hits, { reasons: ['found 1 time in lower case'] });
-  assert.match(batch.text, /^Index entry: Bush\nSearched for: Bush\nThis entry is a person\.\nWhy its hits are checked: found 1 time in lower case\.\nPlaces found:\n\[1\] p\. 1: The ⟦Bush⟧ family met/);
-  assert.match(batch.text, /\[2\] p\. 1: .*A ⟦bush⟧ grew\./);
+  assert.match(batch.text, /^Index entry: Bush\nSearched for: Bush\nThis entry is a person\.\nWhy its hits are checked: found 1 time in lower case\.\nPlaces found:\n\[1\] p\. 1 \(first line of the page\): The ⟦Bush⟧ family met/);
+  assert.match(batch.text, /\[2\] p\. 1 \(first line of the page\): .*A ⟦bush⟧ grew\./);
   assert.equal(batch.hitIds.length, 3);
   const decisions = parseDecisions(JSON.stringify({ decisions: [{ hit: 2, keep: false, reason: 'a plant' }, { hit: 9, keep: false }, { hit: 1, keep: 'yes' }] }), batch);
   assert.deepEqual([...decisions], [[batch.hitIds[1], { keep: false, reason: 'a plant' }]]);

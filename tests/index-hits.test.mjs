@@ -73,3 +73,11 @@ test('search forms follow book-index: names reversed, variants as typed, case fo
   assert.deepEqual(searchForms('King, Martin Luther, Jr.', 'names'), ['martin luther king jr.', 'martin luther king, jr.']);
   assert.deepEqual(searchForms('artificial intelligence (AI)', 'terms', { matchCase: true }), ['AI', 'artificial intelligence']);
 });
+
+test('a hit on the first line of its page is marked, for the judge to see a running head', () => {
+  const book = [{ number: '7', text: 'Chapter Two: Rivers   7\nThe river rose again.' }];
+  const { entries } = parseTermList('river\nRivers\n');
+  const { byEntry } = findHits(book, entries);
+  assert.deepEqual(byEntry.get(entries[1].id).hits.map(hit => hit.top), [true]);
+  assert.deepEqual(byEntry.get(entries[0].id).hits.map(hit => hit.top ?? false), [false]);
+});

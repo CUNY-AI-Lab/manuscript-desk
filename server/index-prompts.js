@@ -49,7 +49,7 @@ const JUDGE_PROMPTS = {
 For every place, decide whether the marked words there refer to what the index entry means: the person, place, work, organization, event or concept its heading names.
 - keep: they refer to it, even in a short mention.
 - drop: they mean something else: another person or thing with the same name, an ordinary word that is spelled the same, part of a longer name or title that is a different subject, a different sense of the word.
-When the words around a place do not settle it, keep it.
+A place on the first line of its page is often a running head, the title of the book, part or chapter printed on every page: drop it when it is one. When the words around a place do not settle it, keep it.
 
 Reply with JSON only, no other text, in this shape, with one decision for every numbered place:
 {"decisions": [{"hit": <number>, "keep": true or false, "reason": "<a few words>"}]}`,

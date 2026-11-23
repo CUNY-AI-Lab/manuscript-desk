@@ -23,6 +23,6 @@ try {
   console.error(error?.code === 'EADDRINUSE' ? `Port ${port} is in use. Set PORT to another port.` : 'The local server could not start.');
   process.exit(1);
 }
-console.log(`Manuscript Desk, local test mode: ${local.origin}/manuscript/format/`);
+console.log(`Manuscript Desk, local test mode: ${local.origin}/manuscript/format/ and ${local.origin}/manuscript/index/`);
 if (key) console.log('Sign-in is simulated. Every model call is real and is charged to the allowance of the CAIL_API_KEY owner.');
 else console.log('CAIL_API_KEY is not set: the pages are served, but model calls will fail. To use real models, run CAIL_API_KEY=<your CAIL Gateway key> npm run dev');

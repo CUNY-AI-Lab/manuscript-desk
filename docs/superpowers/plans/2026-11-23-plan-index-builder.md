@@ -117,4 +117,19 @@ Measurement:
 
 ## Deviations
 
-Recorded at the end of the work.
+- **Measurement on published books.** At the owner's request, made after this plan was written,
+  stage 2 and stage 1 are measured against the indexes of two published monographs (one dev, one
+  holdout scored once), not against a stand-in PDF and a list drawn up by hand: the book's PDF with
+  its index pages taken out is the proof, and its parsed index is the gold. The Brill manuscript
+  (a `.docx`) is used for the real run through the page; its PDF there is a stand-in made with
+  LibreOffice. `scripts/index-eval.mjs` gained a text-in path for stage 1 (the PDF's paragraphs),
+  used by the script only; the page still takes a `.docx`.
+- **Shared runner.** `lib/index/runner.js` holds the run the three index routes share, instead of
+  each helper repeating the shape of `lib/roles/label.js`.
+- **One route for two judgments.** `/api/index/judge` takes `task: ambiguous | subentries`; the
+  browser builds the batch text and the route checks the task and its length.
+- **Running heads.** A hit on a page's first line is marked for the judge, which is told that such a
+  place is often a running head (dev: the judge kept the two running-head hits of the hand-labelled
+  sample without the mark).
+- **Saved ranges keep a number, not a heading.** Where an excluded range's first page is cut is
+  saved as a character position, so no heading text from the PDF is kept in the browser.
