@@ -7,6 +7,47 @@ improves it, and measures again. The manuscript is other scholars' unpublished w
 private guidelines folder, and nothing from it (text, titles, names) is in this repository. This
 file holds only counts, accuracies and role names.
 
+## Where things stand
+
+For a reader who has not followed the rounds: the current headline numbers, each from the round
+named, then what no person has checked and what is not built. The rounds below hold the detail.
+
+| Measure | Current result | Round |
+|---|---|---|
+| Guideline reading, 18 publishers' guidelines | 421 of 438 expected requirements (96.1%), lowest case 88.9%, PASS (round 6: 424, lowest 70.0%, FAIL) | 7 |
+| Settings stability, Brill guidelines | 18 settings filled in all of five runs (5 before round 4); 19 in round 6's 18-case run, 21 in its page run | 5, 6 |
+| Paragraph roles, structural | dev 98.0%, holdout 99.0% (run once), front matter 57 of 57 | 6 |
+| Style agreement with the hand-formatted file | gold roles, hand sheet: dev 100.0%, holdout 98.9%; the page's own labels and sheet: 98.7% over the book | 6 |
+| Comments of the manual job found | structure 21 of 26, reading 7 of 12 strictly (8 by the script), human 0 of 1 (not imitated, by design) | 6, 7 |
+| Calls and rough cost for this book | about 14 calls to read the guidelines, 85 to label 1,460 paragraphs, 13 to 15 for the reading check, 1 for running titles: about 115 calls and $0.50 to $0.60 by the Gateway's estimate | 4, 6, 7 |
+
+Never checked by a person:
+
+- The formatted file opened in Microsoft Word. Every file passes the structural validator, and
+  LibreOffice converted it to PDF (round 2); nobody has opened one in Word and accepted or rejected its changes.
+- The review step (step 5) used by a scholar on a real manuscript, including its front-matter group.
+- The reading check's extra queries judged by someone other than the agent that built the check
+  (they are "real on my reading" in rounds 5 and 6, a judgment by that agent).
+- The rate-limit backoff against a real refusal: no measured run has been refused by the Gateway
+  since round 5, so the pauses are exercised only by unit tests.
+- Whether the rules the sentence question adds are requirements rather than advice, beyond the
+  agent's own sample (round 6) and a word count (round 7).
+
+Not built (checked against the design and the code, round 7):
+
+- Deployment: the Doorway route, the verifier key and bindings, the catalog entry and a signed-in
+  acceptance run, a separate step the design leaves out of this build.
+- The once-per-page sign-in guard the plan lists before deployment: on a lost session the page goes
+  to the sign-in path every time, with nothing to stop a session that stays invalid from bouncing it.
+- Deletion of the saved work after 24 hours happens only when the page is next opened (the plan's
+  follow-up before deployment); the design's deletion on download is not built (the page clears on
+  Start over).
+- Chapter labels: a label line already in a title block is styled, but none is added where the
+  source has none (12 in this job).
+- Tables from tabbed lines: such lines get the table style and a To-do asking the author to make a
+  Word table; no table is built.
+- A second manuscript, ideally one whose source uses styles: everything here is measured on one book.
+
 ## Round 1: paragraph roles
 
 The stage: `lib/docx/read.js` reads the `.docx` into one entry per top-level child of `w:body`
@@ -1074,3 +1115,133 @@ the holdout ($0.24), the reading check on dev (twice, the second for a prompt li
 and holdout ($0.21), the 18-case run ($0.43) and the page run (about $0.24 by the Gateway's
 estimate). Every answer is recorded or cached in the case's `work/` folder (`roles-answers.json`,
 `reading-answers.json`, `generality-r6/`).
+
+## Round 7: list items under a lead-in, room for the reading check
+
+### A. Requirements in bulleted lists under a lead-in
+
+**Why.** Round 6's lowest case (7 of 10) missed three items of bulleted lists: bare noun phrases
+under a lead-in that asks something (a sentence ending in a colon that says what the editor is
+responsible for, or what a chapter should include). The coverage code did not count such items as
+requirement sentences, so the sentence question never asked about them.
+
+**What changed** (`lib/rules/coverage.js`, `server/prompts.js`):
+
+- `sentenceEntries` gives each sentence of a bulleted item the sentence ending in a colon just
+  before its list (in the same paragraph or the one before), as its lead-in; a sentence that does
+  not end in a colon ends the list's lead-in.
+- An item counts as a requirement sentence when its own words ask something, as before, or when its
+  lead-in asks something (the same words of obligation and imperatives, and also "responsible for")
+  and the item, without its bullet, has at least 12 characters, the shortest quotation the
+  guidelines' check accepts.
+- Coverage compares a sentence without its bullet, and a text shorter than 25 characters (a short
+  item) is covered only by a quotation that holds all of it, not by a few shared characters.
+- The sentence question shows each item under a lead-in that asks with that lead-in, which the
+  Worker finds in the part's own text, so the route's request is unchanged; the prompt says an item
+  is read with the sentence introducing its list. A verdict on an item quotes the item itself.
+- The verdict now also counts as asking nothing a suggestion left to the author's choice (what the
+  author may wish to, might or could do, or may consider) and a sentence that only says where more
+  information or help is found.
+
+**Offline, on round 6's recordings** (the readings replayed, the sentences the new code would ask
+computed, no call): the lowest case's question grew from 14 to 28 sentences and held all three of its
+misses; no other case's question changed by more than a few sentences, the same parts would be
+asked, and in one part two sentences asked in round 6 (neither an expected requirement) fell past
+the 30-sentence cap. Tests use invented text:
+lead-ins across a blank line and in the same paragraph, a lead-in that asks nothing, an item too
+short to quote, a short item that shares only its last words with a quotation, the message that
+shows an item with its lead-in, and an extraction in which an item becomes a rule quoting itself.
+
+**The 18 cases**, `npm run generality -- --models deepseek-v4.1-flash-1017`, fresh, final code, run
+once:
+
+| | Round 6 | Round 7 |
+|---|---|---|
+| Expected rules found | 424/438 (96.8%) | **421/438 (96.1%)** |
+| Calls | 129 (27 settings questions, 19 sentence questions) | **128** (27 settings questions, 18 sentence questions) |
+| Lowest case | 70.0% (the short edited-collection guide, 7 of 10) | **88.9%** (an article guide, 16 of 18) |
+| The short edited-collection guide | 7/10 | **10/10** (27 sentences asked, 23 rules from them) |
+| Failed or refused calls | 0 | 0 |
+| Cost at catalog prices | $0.43 | $0.43 |
+| Verdict | FAIL | **PASS** |
+
+The floor is met and the calls are within the bar; the total is three under round 6's 424, so that
+target is missed. The case the change was for found all ten, and one other edited collection and
+the article guide each found one more. Six cases found one or two fewer, and the losses are not the
+change's, on the run's own recording: no sentence the round 6 code would have asked was pushed past
+the cap by the new items, and the two misses that went to the question got the same verdict ("asks
+nothing") as in round 6, on sentences that state a policy rather than a request. The rest are the
+readings' variance: in one edited-collection guide the readings quoted enough this time that no
+sentence question was asked, and it found two fewer; in the other cases the missed sentence
+overlapped a reading's quotation without the expected words reaching a kept rule, or was past the
+cap of a part with 55 to 141 uncovered sentences, as before.
+
+Advice: of the sentences the verdict said ask something, 41 of 277 (15%) in round 6 and 25 of 232
+(11%) in round 7 hold a word of suggestion or a pointer (may wish, could, consider, refer to, for
+more information, contact, recommend). That is a word count, not a reading: round 6's estimate of a
+third was a sample read by the agent, and this round's rules were not read the same way. Some
+advice still passes (a suggestion to consider colour, a reminder to stay in touch with contributors).
+
+### B. The reading check runs out of output room
+
+**Why it ran out.** The cached answers are short: at most about 3,600 characters (about a thousand
+tokens) on the 63 answers of three prompts. What fills the 10,000-token cap is the thinking before
+them. Units that ran out were 8,400 to 14,000 characters, the same range as units that answered, and
+halves ran out too, so smaller units would not have removed it; the findings cap (12) does not
+touch the thinking either, and this model on Workers AI has no thinking budget finer than "low",
+which it already had. In round 6's page run a call that ran out took 61 to 65 seconds, about 160
+tokens a second.
+
+**What changed** (`server/model.js`, `server/prompts.js`): the reading call's hard cap is 20,000
+tokens (`READING_MAX_TOKENS`), still held under half the context window and under the catalog's
+output limit when a row gives one (the catalog gives none for this model). At the measured speed a
+call that uses it all takes about two minutes, inside the three-minute deadline. Other calls are
+unchanged. `todos-eval` now records the cap an answer ran out at, so a larger cap asks only those
+units again and keeps every cached answer that finished (the cap changes nothing before it is
+reached).
+
+**Verified** with `npm run todos-eval -- --reading all --chapters all` (gold roles, hand sheet): 2
+calls made, for the two chapters that had run out whole, 11 answers from the cache; both answered
+(about 21,000 output tokens for the two, so at least one needed more than the old cap). 13 of 13
+units answered, against 11 in round 6. Reading comments found: 8 of 12 by the script (2 of 5 dev and
+front matter strictly, 5 of 7 holdout), unchanged; structure 21 of 26, unchanged. Queries kept: 47
+(44 in round 6), 2 dropped as unverified. Cost $0.028 at catalog prices.
+
+### C. Labelling through the page: skipped
+
+Not done. A full labelling of the book through `npm run dev` (85 calls with thinking on, about $0.24
+at catalog prices in round 6) and the guidelines on the page did not fit what was left of this
+round's $0.65 after A and B ($0.19). The page's labelling with the front-matter roles is still
+measured only by `roles-eval` (round 6).
+
+### D. Where things stand
+
+Added at the top of this file.
+
+### What remains
+
+- The guideline reading varies by several requirements between runs in the readings themselves
+  (421 and 424 on the same 18 cases with nearly the same code); the 30-sentence cap leaves
+  uncovered sentences of long parts unasked.
+- Two verdicts say "asks nothing" of sentences that state a policy the author must keep (one
+  submission at a time; who may be an author).
+- The items a lead-in introduces are now asked, but the advice share of the sentence question's
+  rules has only been counted by words, not read.
+- The page's labelling with the new roles, a scholar using the review, the formatted file in Word.
+- The sign-in loop guard and eager deletion of saved work before deployment.
+
+### What round 8 should do
+
+- Before deployment: the once-per-page sign-in guard, and deleting saved work after 24 hours
+  without waiting for the page to be opened.
+- Ask the uncovered sentences of a long part in more than one question, or order them by how
+  strongly they ask, instead of the first 30 in the text.
+- Label the book through the page, and put the page, the review and the Word file in front of a
+  person.
+- A second manuscript.
+
+Spent in this round: $0.46 at catalog prices: the 18-case run ($0.428) and the two reading calls
+($0.028); by the Gateway's estimate, $0.29 ($3.70 to $3.41 of the allowance left; its estimate lags the
+calls and counts cached input cheaper). Every answer is
+recorded in the case's private `work/` folder (`generality-r7/`, `reading-answers.json`).
+
