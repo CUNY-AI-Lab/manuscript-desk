@@ -61,9 +61,11 @@ async function mock(context) {
     const { task, text } = JSON.parse(route.request().postData());
     calls.judge.push({ task, text });
     const numbers = [...text.matchAll(/^\[(\d+)\]/gm)].map(match => Number(match[1]));
+    // A drop carries evidence: words of its own place, here the marked words themselves.
+    const marked = n => /⟦([^⟧]+)⟧/.exec(text.split('\n').find(line => line.startsWith(`[${n}]`)) ?? '')?.[1] ?? '';
     const content = task === 'ambiguous'
-      ? { decisions: numbers.map(hit => ({ hit, keep: false, reason: 'an exclamation, not the subject' })) }
-      : { assignments: numbers.map(hit => ({ hit, subentry: 'S1' })) };
+      ? { decisions: numbers.map(hit => ({ hit, keep: false, reason: 'an exclamation, not the subject', evidence: marked(hit) })) }
+      : { assignments: numbers.map(page => ({ page, subentry: 'S1' })) };
     return json(route, { request_id: 'r', content: JSON.stringify(content) });
   });
 }
@@ -114,11 +116,23 @@ try {
   assert.ok(dialogs.some(message => /This makes 1 model call/.test(message)), 'the number of calls is said before the run');
   assert.equal(calls.terms.length, 1);
   assert.equal(calls.terms[0].includes('Placeholder, Ada. Invented Things.'), false, 'the bibliography is not sent');
-  const headings = await page.locator('.term-heading').evaluateAll(inputs => inputs.map(input => input.value));
-  assert.deepEqual(headings.sort(), [MARKUP, 'Placeholder, Ada', 'lanterns'].sort());
+  const headingsShown = () => page.locator('.term-heading').evaluateAll(inputs => inputs.map(input => input.value));
+  // The default threshold hides concepts found on one page only; the name stays.
+  assert.deepEqual(await headingsShown(), ['Placeholder, Ada']);
+  assert.match(await page.locator('#threshold-status').textContent(), /^2 proposals are below this and not shown\. They stay in the list\./);
+  assert.equal(await page.locator('#threshold-concepts').inputValue(), '2');
+  await page.getByRole('button', { name: 'Show the 2 proposals below the thresholds' }).click();
+  assert.deepEqual((await headingsShown()).sort(), [MARKUP, 'Placeholder, Ada', 'lanterns'].sort());
+  await page.getByRole('button', { name: 'Hide the proposals below the thresholds' }).click();
+  assert.deepEqual(await headingsShown(), ['Placeholder, Ada']);
+  await page.selectOption('#threshold-concepts', '1');
+  assert.deepEqual((await headingsShown()).sort(), [MARKUP, 'Placeholder, Ada', 'lanterns'].sort());
+  assert.equal(await page.locator('#threshold-status').textContent(), 'Every proposal passes this.');
+  assert.match(await page.locator('.term-row', { has: page.locator('input[value="lanterns"]') }).textContent(), /on about 1 page/);
   assert.equal(await page.evaluate(() => window.__xss), undefined, 'model text is never parsed as HTML');
   assert.match(await page.locator('.term-counts').textContent(), /3 entries: 0 accepted, 3 to review/);
   log('stage 1: one passage asked, bibliography not sent, an unverified quotation dropped, markup shown as text');
+  log('threshold: concepts on one page hidden by default and shown on request; the author lowers it to every proposal');
 
   // Drop the odd one, accept the rest, merge nothing, download the list.
   await page.locator('.term-row', { has: page.locator(`input[value="${MARKUP.replaceAll('"', '\\"')}"]`) }).getByRole('button', { name: 'Drop' }).click();
@@ -158,15 +172,23 @@ try {
   log('page ranges: one call, the unverified range dropped, the confirmed range left out after finding again');
 
   // ---- Ambiguous hits ----
+  const scopes = await page.locator('#judge-scope option').allTextContents();
+  assert.deepEqual(scopes, ['The entries you marked ambiguous: 1 entry, 1 call', 'The entries the tool flags: 0 entries, 0 calls', 'Both: 1 entry, 1 call']);
+  assert.equal(await page.locator('#judge-scope').inputValue(), 'marked', 'the author\'s marks first');
+  await page.selectOption('#judge-scope', 'flagged');
+  assert.equal(await page.locator('#judge-button').isDisabled(), true);
+  assert.match(await page.locator('#judge-area').textContent(), /The tool flags no entry with hits\./);
+  await page.selectOption('#judge-scope', 'marked');
   await page.getByRole('button', { name: /Judge 1 hit of 1 entry in context \(1 call\)/ }).click();
   await page.locator('#judge-area summary', { hasText: 'the model proposes dropping 1' }).waitFor();
   assert.ok((await preview()).includes('help, 4'), 'nothing is dropped before the author applies it');
   await page.locator('#judge-area summary').first().click();
+  assert.match(await page.locator('#judge-area .review-note').first().textContent(), /^Model: drop \(an exclamation, not the subject\), because of “Help”$/);
   await page.getByRole('button', { name: 'Apply the model’s decisions' }).click();
   assert.equal((await preview()).includes('help, 4'), false);
   await page.locator('#judge-area input[type=checkbox]').first().check();
   assert.ok((await preview()).includes('help, 4'), 'a single decision can be reversed');
-  log('judge: 1 call, decisions shown, applied on request, one reversed');
+  log('judge: the scope chosen with its calls said first, 1 call, each drop with its verified evidence, applied on request, one reversed');
 
   // ---- Subentries ----
   await page.getByRole('button', { name: /Sort 2 hits into subentries \(1 call\)/ }).click();
