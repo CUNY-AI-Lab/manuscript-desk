@@ -139,14 +139,15 @@ export function slotFills(sheets) {
 const DROPPED_ELEMENTS = new Set(['script', 'style', 'nav', 'header', 'footer']);
 const BLOCK_ELEMENTS = new Set(['address', 'article', 'aside', 'blockquote', 'br', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'main', 'ol', 'p', 'pre', 'section', 'table', 'td', 'th', 'tr', 'ul']);
 const NAME_CHAR = /[A-Za-z0-9]/;
-const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', hellip: '…', shy: '­' };
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', hellip: '…', shy: '­', frac12: '½', frac14: '¼', frac34: '¾', Prime: '″', prime: '′', times: '×', copy: '©', deg: '°', sect: '§' };
 
 function decodeEntity(entity, body) {
   if (body[0] === '#') {
     const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
     return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
   }
-  return NAMED_ENTITIES[body.toLowerCase()] ?? entity;
+  // Exact case first: &Prime; (a double prime) and &prime; differ.
+  return NAMED_ENTITIES[body] ?? NAMED_ENTITIES[body.toLowerCase()] ?? entity;
 }
 
 // The name of the tag opening at `at` ('<' or '</' then letters and digits, lower-cased) and
@@ -208,7 +209,7 @@ export function htmlToText(html) {
     at = tagEnd;
   }
   return parts.join('')
-    .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, decodeEntity)
+    .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);/gi, decodeEntity)
     .replace(/[^\S\n]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

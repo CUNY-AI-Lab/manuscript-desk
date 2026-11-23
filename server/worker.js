@@ -178,7 +178,7 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
         const model = validateModel(body.model);
-        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph or an edited collection.');
+        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph, an edited collection or a dissertation.');
         if (!GROUPS.includes(body.group)) throw new AppError('invalid_request', 'The request named a part of the guidelines this tool does not read. Reload the page and try again.');
         // The text is never echoed in an error, logged or stored.
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
@@ -190,7 +190,7 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
         const model = validateModel(body.model);
-        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph or an edited collection.');
+        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph, an edited collection or a dissertation.');
         const offered = slotsFor(body.docType);
         // The sentences no reading quoted, if any: a short list of short texts from the same part.
         const unreported = body.unreported ?? [];

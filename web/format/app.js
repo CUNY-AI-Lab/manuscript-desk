@@ -15,6 +15,7 @@ import { createStore, watchExpiry } from '../shared/store.js';
 import { el, plainReason, renderAddRule, renderRules } from './rules-view.js';
 import { createManuscriptStep } from './manuscript-step.js';
 import { createOutputStep } from './output-step.js';
+import { presetSheet, presetsFor } from '../../lib/presets/index.js';
 
 const MAX_SHEET_FILE_CHARS = 2000000;
 const NOT_A_SHEET = 'This is not a rule sheet file.';
@@ -130,6 +131,30 @@ export function loadedSheetState(sheet) {
   return { sheet, docType: sheet.docType, guidelines: [], failures: [], loadedFromFile: true };
 }
 
+// Built-in requirements. For a document type with a built-in set, step 2 offers it, chosen by
+// default, beside the upload of another institution's requirements; using it reads nothing with a
+// model. `source` is 'built-in' or 'upload'.
+export const BUILT_IN_CHECK = 'These are the requirements as the Lab read them on the date shown. Check the current requirements before you deposit, and tell the CUNY AI Lab if something has changed.';
+
+/** What step 2 offers: the built-in set for this document type, if any, and which choice is on. */
+export function guidelineChoice(docType, source) {
+  const preset = presetsFor(docType)[0] ?? null;
+  return { preset, builtIn: Boolean(preset) && source !== 'upload' };
+}
+
+/** The page's state once a built-in set is used: its sheet, no guidelines, nothing read by a model. */
+export function builtInState(id) {
+  const sheet = presetSheet(id);
+  if (!sheet) return null;
+  return { sheet, docType: sheet.docType, guidelines: [], failures: [], loadedFromFile: false, source: 'built-in' };
+}
+
+/** A notice for a sheet that began as a built-in set: its name, where it comes from and when it was read. */
+export function presetNotice(sheet) {
+  if (!sheet?.preset) return null;
+  return `This rule sheet is the built-in set “${sheet.preset.name}”, read by hand from the published requirements on ${sheet.preset.retrieved}. No model read anything. ${BUILT_IN_CHECK}`;
+}
+
 // The question to ask before loading a sheet, or null when nothing would be lost.
 export function loadSheetQuestion({ sheet, guidelines }) {
   const replaces = Boolean(sheet?.rules.length);
@@ -192,7 +217,7 @@ export const droppedNotice = n => (n === 1
   : `${n.toLocaleString('en-US')} rules were left out because the tool could not confirm them against the guidelines.`);
 
 // The work to keep in this browser: never the files, and nothing about the page's controls.
-export const savedState = state => ({ docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: state.loadedFromFile });
+export const savedState = state => ({ docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: state.loadedFromFile, source: state.source ?? null });
 
 const isFailure = (entry, guidelines) => isObject(entry) && (GROUPS.includes(entry.group) || entry.group === SETTINGS_GROUP)
   && Number.isInteger(entry.doc) && entry.doc >= 0 && entry.doc < guidelines.length
@@ -213,14 +238,15 @@ export function restoredState(saved) {
       group, doc, part, ...(half === undefined ? {} : { half }), code, ...(typeof message === 'string' && message ? { message: message.slice(0, 300) } : {}),
     }))
     : [];
-  return { docType, guidelines, sheet: sheet.ok ? sheet.sheet : null, failures, loadedFromFile: sheet.ok && saved.loadedFromFile === true };
+  const source = isObject(saved) && (saved.source === 'built-in' || saved.source === 'upload') ? saved.source : null;
+  return { docType, guidelines, sheet: sheet.ok ? sheet.sheet : null, failures, loadedFromFile: sheet.ok && saved.loadedFromFile === true, source };
 }
 
 if (typeof document !== 'undefined') start();
 
 function start() {
   const $ = id => document.getElementById(id);
-  const state = { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false, running: null };
+  const state = { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, source: null, editingId: null, adding: false, running: null };
   let store = null;
   try {
     if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB });
@@ -303,6 +329,20 @@ function start() {
     $('read-button').hidden = running;
     $('stop-button').hidden = !running;
     $('progress-area').hidden = !running;
+    // A document type with built-in requirements offers them first; the upload stays one choice away.
+    const choice = guidelineChoice(state.docType, state.source);
+    $('built-in-controls').hidden = !choice.preset;
+    $('built-in-controls').disabled = running;
+    if (choice.preset) {
+      $('built-in-name').textContent = `${choice.preset.name} (built in)`;
+      $('built-in-about').replaceChildren(
+        `Covers ${choice.preset.covers}. Read by hand on ${choice.preset.retrieved} from `,
+        ...choice.preset.sources.flatMap((url, at) => [at ? (at === choice.preset.sources.length - 1 ? ' and ' : ', ') : '', el('a', { href: url, text: new URL(url).pathname.replace(/^\/+/u, '') || url, target: '_blank', rel: 'noopener' })]),
+        `. No model is used and nothing is charged. ${BUILT_IN_CHECK}`);
+      for (const input of document.querySelectorAll('input[name="guideline-source"]')) input.checked = input.value === (choice.builtIn ? 'built-in' : 'upload');
+    }
+    $('guidelines-controls').hidden = choice.builtIn;
+    $('read-button').textContent = choice.builtIn ? 'Use these requirements' : 'Read the guidelines';
     $('no-sources').hidden = state.guidelines.length > 0;
     $('sources').replaceChildren(...state.guidelines.map((entry, index) => el('li', {},
       el('span', { className: 'source-name', text: entry.name }),
@@ -319,6 +359,8 @@ function start() {
     $('sheet-empty').hidden = Boolean(sheet?.rules.length);
     const notices = [];
     if (sheet && state.loadedFromFile) notices.push(el('p', { className: 'notice', id: 'loaded-notice', text: LOADED_NOTICE }));
+    const fromPreset = presetNotice(sheet);
+    if (fromPreset) notices.push(el('p', { className: 'notice info', id: 'preset-notice', text: fromPreset }));
     const manual = manualNotice(sheet, state);
     if (manual) notices.push(el('p', { className: 'notice info', text: manual }));
     if (sheet?.dropped > 0) notices.push(el('p', { className: 'notice', id: 'dropped-notice', text: droppedNotice(sheet.dropped) }));
@@ -448,7 +490,26 @@ function start() {
   const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal }).catch(refusal);
   const callSettings = ({ model, docType, slots, text, unreported, signal }) => api.post('/api/settings', { model, docType, slots, text, ...(unreported ? { unreported } : {}) }, { signal }).catch(refusal);
 
+  // Uses the built-in requirements: their rule sheet, as shipped, with no model call.
+  function useBuiltIn() {
+    const { preset } = guidelineChoice(state.docType, state.source);
+    if (!preset) return;
+    if (state.sheet?.rules.length && !confirm('Using the built-in requirements replaces the rule sheet below, with any changes you made. Continue?')) return;
+    const next = builtInState(preset.id);
+    if (!next) { showErrors(['The built-in requirements could not be loaded. Reload the page.']); return; }
+    showErrors([]);
+    Object.assign(state, next, { editingId: null, adding: false });
+    changed({ focusId: 'sheet-title' });
+    announce(`The built-in requirements are in the rule sheet: ${plural(state.sheet.rules.length, 'rule', 'rules')}. No model was used.`);
+  }
+
+  function chooseSource(value) {
+    state.source = value === 'upload' ? 'upload' : 'built-in';
+    changed();
+  }
+
   async function read({ retry = false } = {}) {
+    if (!retry && guidelineChoice(state.docType, state.source).builtIn) { useBuiltIn(); return; }
     const model = $('model-select').value;
     const problems = [
       !state.docType && 'Choose what you are submitting first.',
@@ -526,7 +587,7 @@ function start() {
   function clearWork() {
     state.running?.abort();
     manuscript.startOver();
-    Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false });
+    Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, source: null, editingId: null, adding: false });
     $('paste-box').value = '';
     showErrors([]);
     render();
@@ -612,6 +673,7 @@ function start() {
   }
 
   for (const input of document.querySelectorAll('input[name="doc-type"]')) input.addEventListener('change', () => chooseDocType(input.value));
+  for (const input of document.querySelectorAll('input[name="guideline-source"]')) input.addEventListener('change', () => chooseSource(input.value));
   $('guideline-files').addEventListener('change', async event => {
     const files = [...event.target.files];
     event.target.value = '';

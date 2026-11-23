@@ -37,6 +37,14 @@ const SETTINGS = {
   'layout.spacing': { line: ['Line spacing (1 is single, 2 is double)'] },
   'layout.margins': { inches: ['Margins in inches'] },
   'layout.page-numbers': { position: ['Page numbers', { 'top-left': 'Top left', 'top-center': 'Top centre', 'top-right': 'Top right', 'bottom-left': 'Bottom left', 'bottom-center': 'Bottom centre', 'bottom-right': 'Bottom right' }] },
+  'layout.paper': { size: ['Paper size', { letter: 'US Letter (8.5 × 11 in)', a4: 'A4' }] },
+  'layout.margin-sides': { top: ['Top margin in inches'], right: ['Right margin in inches'], bottom: ['Bottom margin in inches'], left: ['Left margin in inches'] },
+  'layout.element-spacing': { notes: ['Line spacing of notes'], quotations: ['Line spacing of block quotations'], bibliography: ['Line spacing of the bibliography'], captions: ['Line spacing of captions'] },
+  'layout.page-sequences': { preliminary: ['Pages before the first chapter numbered', { 'lower-roman': 'In lower-case roman numerals (i, ii, iii)', arabic: 'In arabic numerals', none: 'Not numbered' }], restart: ['Numbers start again at 1 on the first chapter'], titlePage: ['Title page', { 'counted-not-shown': 'Counted, with no number shown', shown: 'Numbered like the others' }] },
+  'matter.order': { order: ['Parts in this order (separated by >)'], required: ['Parts that must be there (separated by >)'] },
+  'title-page.elements': { elements: ['The title page states (separated by >)'] },
+  'chapters.new-page': { required: ['Each chapter and major section starts on a new page'] },
+  'captions.position': { tables: ['Table titles go', { above: 'Above the table', below: 'Below the table' }], figures: ['Figure captions go', { above: 'Above the figure', below: 'Below the figure' }] },
   'length.words': { max: ['Most words allowed'], min: ['Fewest words allowed'] },
   'running-title.length': { max: ['Most characters in a running title'] },
   'abstract.words': { max: ['Most words in the abstract'] },
@@ -48,6 +56,16 @@ const SETTINGS = {
   'index.sorting': { order: ['Order of index entries', { 'letter-by-letter': 'Letter by letter (Newark before New York)', 'word-by-word': 'Word by word (New York before Newark)' }] },
 };
 
+// The parts of a work and of a title page, in plain words, for the settings that list them.
+export const PART_WORDS = Object.freeze({
+  'title-page': 'Title page', copyright: 'Copyright page', approval: 'Approval page', abstract: 'Abstract', dedication: 'Dedication', epigraph: 'Epigraph',
+  foreword: 'Foreword', preface: 'Preface', acknowledgments: 'Acknowledgments', contents: 'Table of contents', 'list-of-tables': 'List of tables',
+  'list-of-figures': 'List of figures', 'list-of-abbreviations': 'List of abbreviations', body: 'Chapters', appendix: 'Appendices', notes: 'Notes',
+  glossary: 'Glossary', bibliography: 'Bibliography', vita: 'Vita or autobiographical statement',
+  title: 'Full title', author: 'Author\u2019s full name', statement: 'Submission statement', degree: 'Degree', program: 'Program', institution: 'Institution',
+  year: 'Year', month: 'Month', advisor: 'Advisor',
+});
+
 export const settingLabel = (slot, name) => SETTINGS[slot]?.[name]?.[0] ?? name;
 export const valueLabel = (slot, name, value) => SETTINGS[slot]?.[name]?.[1]?.[value] ?? String(value);
 
@@ -57,7 +75,9 @@ export function settingsInWords(slot, params) {
   if (slot === null || !SLOTS[slot]) return [];
   return Object.keys(SLOTS[slot].params).map(name => {
     const value = params?.[name];
+    const kind = fieldKind(SLOTS[slot].params[name]);
     const words = value === null || value === undefined ? 'not given'
+      : kind.type === 'parts' && typeof value === 'string' ? value.split('>').map(part => PART_WORDS[part.trim()] ?? part.trim()).join(', ')
       : typeof value === 'boolean' ? (value ? 'Yes' : 'No')
         : typeof value === 'number' ? value.toLocaleString('en-US') : valueLabel(slot, name, value);
     return `${settingLabel(slot, name)}: ${words}`;
@@ -75,6 +95,8 @@ export function fieldKind(validator) {
   const nullable = allowed.endsWith(', or null');
   if (nullable) allowed = allowed.slice(0, -', or null'.length);
   if (allowed === 'true | false') return { type: 'boolean', nullable };
+  const parts = /^(?:parts in order|elements) separated by ">", each once, from: (.*)$/u.exec(allowed);
+  if (parts) return { type: 'parts', nullable, known: parts[1].split(', ') };
   if (allowed.startsWith('"')) return { type: 'list', nullable, values: allowed.split(' | ').map(value => JSON.parse(value)) };
   let match = /^whole number (\d+)(?: to (\d+)| or more)$/.exec(allowed);
   if (match) return { type: 'number', nullable, whole: true, min: Number(match[1]), max: match[2] === undefined ? null : Number(match[2]) };
@@ -88,7 +110,8 @@ export function fieldKind(validator) {
 function kindInWords(kind) {
   const range = kind.max === null ? `${kind.min} or more` : `from ${kind.min} to ${kind.max}`;
   const base = kind.type === 'number' ? `${kind.whole ? 'a whole number' : 'a number'} ${range}`
-    : kind.type === 'text' ? `between ${kind.min} and ${kind.max} characters` : 'one of the choices';
+    : kind.type === 'text' ? `between ${kind.min} and ${kind.max} characters`
+      : kind.type === 'parts' ? `names from this list, each once, separated by ">": ${kind.known.join(', ')}` : 'one of the choices';
   return kind.nullable ? `${base}, or leave it empty` : base;
 }
 
@@ -97,6 +120,7 @@ export function plainReason(reason, slot) {
   if (reason === 'statement') return 'Write the rule in 1 to 500 characters.';
   if (reason === 'mode: fix needs a slot') return 'Only rules with settings can be fixed automatically. Choose another option.';
   if (reason === 'params: words or lines') return 'Fill in at least one of the two numbers.';
+  if (/^params: \w+ or \w+/u.test(reason)) return 'Fill in at least one of the settings.';
   const match = /^params\.([A-Za-z]+): /.exec(reason);
   if (match && SLOTS[slot]?.params[match[1]]) {
     return `${settingLabel(slot, match[1])}: enter ${kindInWords(fieldKind(SLOTS[slot].params[match[1]]))}.`;
@@ -126,6 +150,7 @@ export function orderedCategories(docType) {
 
 function sourceLine(source) {
   // A quotation is shown exactly as stored, "…" and all, so skipped words are visible.
+  if (source.kind === 'guidelines' && source.set) return el('p', { className: 'rule-source' }, `From the built-in set: “${source.quote}”`, ...(source.url ? [' (', el('a', { href: source.url, text: 'source', target: '_blank', rel: 'noopener' }), source.retrieved ? `, read ${source.retrieved})` : ')'] : []));
   if (source.kind === 'guidelines') return el('p', { className: 'rule-source', text: `“${source.quote}”` });
   if (source.kind === 'manual') return el('p', { className: 'rule-source', text: `From ${source.manual}, section ${source.section}` });
   return el('p', { className: 'rule-source', text: 'Added by you' });
@@ -169,7 +194,8 @@ function editForm(rule, actions) {
         return [name, kind.type === 'number' ? (raw === '' ? NaN : Number(raw)) : raw];
       });
     }
-    const help = kind.nullable ? el('p', { className: 'help', id: `${id}-help`, text: 'Leave it empty if the guidelines do not say.' }) : null;
+    const helpText = [kind.type === 'parts' ? `Names from this list, separated by >: ${kind.known.join(', ')}.` : '', kind.nullable ? 'Leave it empty if the guidelines do not say.' : ''].filter(Boolean).join(' ');
+    const help = helpText ? el('p', { className: 'help', id: `${id}-help`, text: helpText }) : null;
     if (help) control.setAttribute('aria-describedby', help.id);
     return el('div', { className: 'field' }, el('label', { for: id, text: settingLabel(rule.slot, name) }), control, help);
   });

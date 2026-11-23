@@ -38,7 +38,7 @@ const ids = list => list.map(category => category.id);
 
 test('exports the version, document types and modes', () => {
   assert.equal(SHEET_VERSION, 1);
-  assert.deepEqual(DOC_TYPES, ['article', 'monograph', 'edited-collection']);
+  assert.deepEqual(DOC_TYPES, ['article', 'monograph', 'edited-collection', 'dissertation']);
   assert.deepEqual(MODES, ['fix', 'flag', 'supply']);
 });
 
@@ -73,7 +73,7 @@ test('every category has a label, a known group and known document types', () =>
 
 test('every slot names an existing category', () => {
   const known = new Set(ids(CATEGORIES));
-  assert.equal(Object.keys(SLOTS).length, 37);
+  assert.equal(Object.keys(SLOTS).length, 45);
   for (const [slot, { category, params }] of Object.entries(SLOTS)) {
     assert.ok(known.has(category), `${slot} -> ${category}`);
     for (const validator of Object.values(params)) assert.equal(typeof validator, 'function', slot);
@@ -271,4 +271,42 @@ test('newSheet("monograph") is valid and empty', () => {
   assert.equal(result.ok, true, result.reason);
   assert.deepEqual(result.sheet, sheet);
   assert.throws(() => newSheet('thesis'), TypeError);
+});
+
+test('a dissertation has a title page, front and back matter, chapters and an abstract, but no index or contributors', () => {
+  const dissertation = ids(categoriesFor('dissertation'));
+  for (const id of ['title-page', 'front-matter', 'back-matter', 'chapters', 'abstract-keywords', 'accessibility', 'layout']) assert.ok(dissertation.includes(id), id);
+  for (const id of ['index', 'contributors', 'consistency', 'anonymization', 'declarations']) assert.ok(!dissertation.includes(id), id);
+  for (const type of DOC_TYPES) assert.ok(ids(categoriesFor(type)).includes('accessibility'), type);
+});
+
+test('the dissertation settings take their values and refuse others', () => {
+  const rule = (slot, category, params) => validateRule({ ...slotted(), category, slot, params });
+  assert.equal(rule('layout.paper', 'layout', { size: 'letter' }).ok, true);
+  assert.equal(rule('layout.paper', 'layout', { size: 'legal' }).ok, false);
+  assert.equal(rule('layout.margin-sides', 'layout', { top: 1, right: 1, bottom: 1, left: 1.5 }).ok, true);
+  assert.equal(rule('layout.margin-sides', 'layout', { top: null, right: null, bottom: null, left: 1.5 }).ok, true);
+  assert.equal(rule('layout.margin-sides', 'layout', { top: null, right: null, bottom: null, left: null }).ok, false);
+  assert.equal(rule('layout.element-spacing', 'layout', { notes: 1, quotations: null, bibliography: null, captions: null }).ok, true);
+  assert.equal(rule('layout.page-sequences', 'layout', { preliminary: 'lower-roman', restart: true, titlePage: 'counted-not-shown' }).ok, true);
+  assert.equal(rule('layout.page-sequences', 'layout', { preliminary: 'upper-roman', restart: true, titlePage: 'shown' }).ok, false);
+  assert.equal(rule('matter.order', 'front-matter', { order: 'title-page > copyright > approval > abstract > contents > body > bibliography', required: 'title-page > abstract > contents' }).ok, true);
+  assert.equal(rule('matter.order', 'front-matter', { order: 'title-page > cover', required: null }).ok, false, 'an unknown part');
+  assert.equal(rule('matter.order', 'front-matter', { order: 'title-page > title-page', required: null }).ok, false, 'a part twice');
+  assert.equal(rule('title-page.elements', 'title-page', { elements: 'title > author > statement > degree > year' }).ok, true);
+  assert.equal(rule('chapters.new-page', 'chapters', { required: true }).ok, true);
+  assert.equal(rule('captions.position', 'figures-tables', { tables: 'above', figures: 'below' }).ok, true);
+  assert.equal(rule('captions.position', 'figures-tables', { tables: null, figures: null }).ok, false);
+});
+
+test('a rule of a built-in set keeps the page it quotes and the day it was read', () => {
+  const source = { kind: 'guidelines', quote: 'Please use double quotation marks throughout.', doc: 0, url: 'https://example.edu/format', retrieved: '2026-11-23', set: 'example-set' };
+  assert.deepEqual(validateRule({ ...slotted(), source }).rule.source, source);
+  assert.equal(validateRule({ ...slotted(), source: { ...source, url: 'javascript:alert(1)' } }).ok, false);
+  assert.equal(validateRule({ ...slotted(), source: { ...source, url: 'http://example.edu/' } }).ok, false, 'https only');
+  assert.equal(validateRule({ ...slotted(), source: { ...source, retrieved: '2026-02-30' } }).ok, false);
+  const preset = { id: 'example-set', name: 'Example', sources: ['https://example.edu/format'], retrieved: '2026-11-23' };
+  assert.deepEqual(validateSheet({ ...sheetWith([]), preset }).sheet.preset, preset);
+  assert.equal(validateSheet({ ...sheetWith([]), preset: { ...preset, sources: [] } }).ok, false);
+  assert.equal('preset' in validateSheet(sheetWith([])).sheet, false);
 });

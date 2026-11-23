@@ -44,7 +44,7 @@ test('keepRule acts only on rules that share the kept rule\'s setting', () => {
 function sampleValues(validator) {
   const kind = fieldKind(validator);
   const values = kind.type === 'list' ? kind.values : kind.type === 'boolean' ? [true, false]
-    : kind.type === 'number' ? [kind.min] : ['Times New Roman'];
+    : kind.type === 'number' ? [kind.min] : kind.type === 'parts' ? [kind.known.slice(0, 2).join(' > ')] : ['Times New Roman'];
   return kind.nullable ? [...values, null] : values;
 }
 
@@ -57,6 +57,8 @@ test('every setting of every rule is shown on its row in plain words', () => {
     for (let i = 0; i < width; i += 1) {
       const params = Object.fromEntries(names.map(name => { const values = sampleValues(spec.params[name]); return [name, values[i % values.length]]; }));
       if (slot === 'blockquote.threshold' && params.words === null && params.lines === null) params.words = 1;
+      // A setting with several nullable values needs at least one of them.
+      if (SLOTS[slot].check?.(params)) { const first = names.find(name => params[name] === null); params[first] = sampleValues(spec.params[first])[0]; }
       const statement = 'A rule.';
       assert.equal(validateRule({ id: 'r-1', category: spec.category, slot, statement, mode: 'flag', source: { kind: 'author' }, params }).ok, true, `${slot} ${JSON.stringify(params)}`);
       const lines = settingsInWords(slot, params);
@@ -73,4 +75,5 @@ test('every setting of every rule is shown on its row in plain words', () => {
   assert.deepEqual(settingsInWords('comma.serial', { use: false }), ['Use the serial (Oxford) comma: No']);
   assert.deepEqual(settingsInWords('layout.font', { family: null, sizePt: 12 }), ['Font: not given', 'Font size in points: 12']);
   assert.deepEqual(settingsInWords(null, {}), [], 'a rule without settings shows none');
+  assert.deepEqual(settingsInWords('matter.order', { order: 'title-page > copyright > list-of-tables', required: null }), ['Parts in this order (separated by >): Title page, Copyright page, List of tables', 'Parts that must be there (separated by >): not given']);
 });
