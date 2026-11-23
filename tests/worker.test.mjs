@@ -168,3 +168,17 @@ test('an asset path with no extension and no trailing slash redirects 308 to the
   // Only a signed-in request is redirected, as for /manuscript itself.
   assert.equal((await handle(at('/format'), configured)).status, 401);
 });
+
+test('files under vendor/ are served as they are, even without an extension', async () => {
+  const handle = createHandler({ gatewayFetch: noGateway });
+  const assets = [];
+  const configured = { ...env, ASSETS: htmlAssets(assets) };
+  for (const path of ['/vendor/mupdf/LICENSE', '/vendor/mupdf/VERSION']) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await handle(await signed(path, {}, { method }), configured);
+      assert.equal(response.status, 200, `${method} ${path}`);
+      assert.equal(response.headers.get('location'), null, path);
+    }
+  }
+  assert.deepEqual(assets, ['/vendor/mupdf/LICENSE', '/vendor/mupdf/LICENSE', '/vendor/mupdf/VERSION', '/vendor/mupdf/VERSION']);
+});

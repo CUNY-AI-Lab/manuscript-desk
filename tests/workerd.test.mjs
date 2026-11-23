@@ -140,6 +140,11 @@ test('the Formatter page is served from the real build, with the slash-less path
       assert.equal(asset.status, 200, path);
       assert.match(asset.headers.get('content-type'), type, path);
     }
+    // The MuPDF licence is a file with no extension; it is served, not redirected.
+    const licence = await worker.runtime.dispatchFetch(`${base}/vendor/mupdf/LICENSE`, { headers, redirect: 'manual' });
+    const licenceText = await licence.text();
+    assert.equal(licence.status, 200);
+    assert.ok(licenceText.includes('GNU AFFERO'), 'the licence text is served');
     assert.deepEqual(worker.outbound, [], 'no global fetch');
   } finally { await worker.dispose(); }
 });

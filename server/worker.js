@@ -25,9 +25,11 @@ class AppError extends Error {
   constructor(code, message, status = 400) { super(message); Object.assign(this, { code, status }); }
 }
 // The mount, or an asset path under it whose last segment has no file extension and no trailing
-// slash; API paths are never folders.
+// slash. API paths are never folders, and vendor/ holds files without extensions (MuPDF's LICENSE
+// and VERSION), which are served as they are.
 const isFolderWithoutSlash = pathname => pathname === MOUNT
   || (pathname.startsWith(`${MOUNT}/`) && pathname !== `${MOUNT}/api` && !pathname.startsWith(`${MOUNT}/api/`)
+    && !pathname.startsWith(`${MOUNT}/vendor/`)
     && !pathname.endsWith('/') && !pathname.slice(pathname.lastIndexOf('/') + 1).includes('.'));
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers } });
 
