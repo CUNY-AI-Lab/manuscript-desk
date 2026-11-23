@@ -4,6 +4,8 @@ import { DOC_TYPES, slotsFor } from '../lib/rules/schema.js';
 import { MAX_UNREPORTED, MAX_UNREPORTED_CHARS } from '../lib/rules/extract.js';
 import { modelControls } from './model.js';
 import { GROUPS, readingPayload, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
+import { judgePayload, rangesPayload, termsPayload } from './index-prompts.js';
+import { JUDGE_TASKS } from '../lib/index/judge.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -230,6 +232,36 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         if (typeof body.unit !== 'string' || !body.unit.trim() || body.unit.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of one chapter at a time.');
         const payload = readingPayload({ model, unit: body.unit, row: await catalogRow(model, signal) });
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this chapter. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      // The Index Builder. The passage, the hits and the page openings are never echoed in an error,
+      // logged or stored.
+      if (path === '/api/index/terms' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (typeof body.passage !== 'string' || !body.passage.trim() || body.passage.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of the manuscript at a time.');
+        const payload = termsPayload({ model, passage: body.passage, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished proposing terms for this part of the manuscript. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      if (path === '/api/index/judge' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (!JUDGE_TASKS.includes(body.task)) throw new AppError('invalid_request', 'The request asked for a judgment this tool does not make. Reload the page and try again.');
+        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of places in the book at a time.');
+        const payload = judgePayload({ model, task: body.task, text: body.text, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished with these places in the book. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      if (path === '/api/index/ranges' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (typeof body.pages !== 'string' || !body.pages.trim() || body.pages.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of page openings at a time.');
+        const payload = rangesPayload({ model, pages: body.pages, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished looking through these pages. Try again, or choose another model.');
         return json({ content, request_id: requestId });
       }
       if (path.startsWith('/api/')) throw new AppError('not_found', 'Not found.', 404);
