@@ -5,7 +5,7 @@
 // the page itself starts only where there is a document.
 
 import { DOC_TYPES, GROUPS, MAX_RULES, SHEET_VERSION, newSheet, validateRule, validateSheet } from '../../lib/rules/schema.js';
-import { extractRuleSheet } from '../../lib/rules/extract.js';
+import { SETTINGS_GROUP, extractRuleSheet } from '../../lib/rules/extract.js';
 import { splitGuidelines } from '../../lib/rules/chunk.js';
 import { normalizeForMatch } from '../../lib/rules/quote.js';
 import { cleanPastedText, readGuidelines } from '../../lib/guidelines/read.js';
@@ -21,7 +21,7 @@ const NOT_A_SHEET = 'This is not a rule sheet file.';
 const OTHER_VERSION = 'This rule sheet was made by a different version of the tool.';
 const DAMAGED = 'This rule sheet file is damaged and cannot be used.';
 const FULL = `A rule sheet can hold at most ${MAX_RULES} rules. Remove a rule before adding another.`;
-const GROUP_LABELS = { style: 'spelling, punctuation and style', references: 'citations, references and notes', structure: 'structure, layout and other requirements' };
+const GROUP_LABELS = { style: 'spelling, punctuation and style', references: 'citations, references and notes', structure: 'structure, layout and other requirements', [SETTINGS_GROUP]: 'settings the first reading did not find' };
 const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value);
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 export const LOADED_NOTICE = 'This rule sheet was loaded from a file. Its quotations have not been checked against any guidelines.';
@@ -194,7 +194,7 @@ export const droppedNotice = n => (n === 1
 // The work to keep in this browser: never the files, and nothing about the page's controls.
 export const savedState = state => ({ docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: state.loadedFromFile });
 
-const isFailure = (entry, guidelines) => isObject(entry) && GROUPS.includes(entry.group)
+const isFailure = (entry, guidelines) => isObject(entry) && (GROUPS.includes(entry.group) || entry.group === SETTINGS_GROUP)
   && Number.isInteger(entry.doc) && entry.doc >= 0 && entry.doc < guidelines.length
   && Number.isInteger(entry.part) && entry.part >= 0
   && (entry.half === undefined || entry.half === 0 || entry.half === 1)
@@ -406,8 +406,10 @@ function start() {
     announce(`${name} removed.`);
   }
 
-  const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal })
-    .catch(error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, message: error.message } : error; });
+  // A refusal reaches extractRuleSheet as plain data: its code, whether and when to ask again, and the Worker's message.
+  const refusal = error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error; };
+  const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal }).catch(refusal);
+  const callSettings = ({ model, docType, slots, text, signal }) => api.post('/api/settings', { model, docType, slots, text }, { signal }).catch(refusal);
 
   async function read({ retry = false } = {}) {
     const model = $('model-select').value;
@@ -430,11 +432,13 @@ function start() {
     render();
     try {
       const result = await extractRuleSheet({
-        docType: state.docType, model, guidelines: texts, callRules, only, signal: controller.signal,
+        docType: state.docType, model, guidelines: texts, callRules, callSettings, only, signal: controller.signal,
+        // A second try does not ask again for settings the sheet already has.
+        known: retry ? [...new Set((state.sheet?.rules ?? []).map(rule => rule.slot).filter(Boolean))] : [],
         onProgress: ({ done, total }) => {
           $('progress').max = total;
           $('progress').value = done;
-          $('progress-text').textContent = `Reading the guidelines: ${done} of ${plural(total, 'reading', 'readings')} done.`;
+          $('progress-text').textContent = `Reading the guidelines: ${done} of ${plural(total, 'call', 'calls')} done.`;
         },
       });
       const next = afterRead(state, result, { retry });

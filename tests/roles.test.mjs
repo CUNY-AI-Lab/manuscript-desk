@@ -125,11 +125,13 @@ test('labelRoles labels every non-empty paragraph and none of the empty ones', a
   assert.deepEqual(progress.at(-1), { done: calls.length, total: calls.length });
 });
 
-test('labelRoles retries once after an unreadable reply or a retryable rejection, then records the failure', async () => {
+test('labelRoles retries once after an unreadable reply, and after a rate-limit refusal three times with longer pauses, then records the failure', async () => {
   const paragraphs = manuscript(100);
   const attempts = new Map();
+  const pauses = [];
   const { roles, failures } = await labelRoles({
     paragraphs, model: 'm', passageOptions: { maxParagraphs: 20, overlapShare: 0 },
+    wait: async ms => { pauses.push(ms); },
     async callRoles({ passage }) {
       const first = labelLines(passage)[0];
       const attempt = (attempts.get(first) ?? 0) + 1;
@@ -142,7 +144,8 @@ test('labelRoles retries once after an unreadable reply or a retryable rejection
     },
   });
   assert.equal(attempts.get(0), 2);
-  assert.equal(attempts.get(25), 4, 'twice in the first pass, twice in the second');
+  assert.equal(attempts.get(25), 8, 'four times in the first pass, four in the second');
+  assert.deepEqual(pauses, [2000, 4000, 8000, 2000, 4000, 8000]);
   assert.equal(attempts.get(50), 2, 'once whole and once as the first half, never retried without the retry mark, not asked in the second pass');
   assert.equal(attempts.get(76), 1, 'the paragraphs a reply left out are asked again on their own');
   assert.equal(roles[0], 'title-block');

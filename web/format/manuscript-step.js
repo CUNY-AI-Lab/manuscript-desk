@@ -58,7 +58,7 @@ export function createManuscriptStep(ctx) {
     try {
       reply = await api.post('/api/roles', { model, passage }, { signal });
     } catch (error) {
-      throw error instanceof ApiError ? { code: error.code, retry: error.retry, message: error.message } : error;
+      throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error;
     }
     const roles = rolesOfReply(reply?.content, job.file.paragraphs.length);
     // Kept as roles only, so a reload, a sign-in or a Stop does not pay for this passage again.

@@ -14,7 +14,7 @@ Your files are opened in the browser and are not uploaded. To read the guideline
 
 1. What is being submitted: an article, a monograph or an edited collection.
 2. The guidelines: PDF or Word files, or pasted text, read in the browser.
-3. The rule sheet read out of them (`POST /manuscript/api/rules`, each part read twice), each rule with the sentence it came from, to edit, switch off, add to, download or load.
+3. The rule sheet read out of them (`POST /manuscript/api/rules`, each part read once per group of categories; then each part is asked once, through `POST /manuscript/api/settings`, about the settings that reading did not fill, with the sentence that states each), each rule with the sentence it came from, to edit, switch off, add to, download or load. A call the Gateway refuses for its rate limit is asked again after a pause, a few times.
 4. The manuscript: one `.docx`, read in the browser (`lib/docx/read.js`) and held in the page's memory only, with its size in words and paragraphs.
 5. What each paragraph is: "Read the manuscript" labels the paragraphs through `POST /manuscript/api/roles`, stating the number of model calls first, with progress and Stop. The review shows, by chapter, the paragraphs that are not body text or bibliography entries (those the model could not label first), each with an excerpt, its label in a menu the scholar can change and its neighbours on demand; a filter shows every paragraph or one kind, with counts. The labels are kept in the browser by a hash of the file, with the corrections; after a reload or a sign-in the scholar chooses the same file again and nothing is labelled again (a stopped run resumes from the passages already answered), while another file is labelled from the start.
 6. Format and download: the formatter, the To-do checks, the comments, the To-dos list and the companion documents run in the browser (`web/format/output-state.js`), running titles are asked of `POST /manuscript/api/running-titles` only when the rule sheet calls for them, and every file offered has passed the structural validator. A summary says what was changed, with counts, what was flagged, and what the author still has to supply.
@@ -76,10 +76,10 @@ This mode exists only in the dev script (`scripts/dev.mjs`, `scripts/dev-server.
 `scripts/generality.mjs` measures how well the rule sheet comes out of real publishers' guidelines with real models. It runs the product's own reading, prompt, model controls and extraction code, calls the Gateway at `https://tools.ailab.gc.cuny.edu/v1/chat/completions` directly, and checks each sheet against rules we have written down as expected.
 
 ```bash
-CAIL_API_KEY=... npm run generality -- --models deepseek-v4.1-flash-1017,other-model [--only <folder>] [--all [--doc-type article]] [--repeat <n>]
+CAIL_API_KEY=... npm run generality -- --models deepseek-v4.1-flash-1017,other-model [--only <folder>] [--all [--doc-type article]] [--repeat <n>] [--save <folder>]
 ```
 
-`--repeat <n>` reads each case n times and adds, per case, a table of the rule sheet's settings: in how many runs each was filled and with which values (a text value, such as a font name or a marker's example, only as a label).
+`--repeat <n>` reads each case n times and adds, per case, a table of the rule sheet's settings: in how many runs each was filled and with which values (a text value, such as a font name or a marker's example, only as a label), and how many were filled in every run. `--save <folder>` writes each rule sheet as JSON to that folder, which must be outside the repository, since a sheet quotes the guidelines.
 
 Every call is charged to the key in `CAIL_API_KEY`, so a run spends your own model budget; the script reports the tokens used and their cost from the public model catalog. The key is read only from that variable and never printed.
 
@@ -95,7 +95,7 @@ Real guidelines stay outside the repository. The script reads the folder named b
 
 `files` (paths relative to that subfolder) lists the documents read together as one set of guidelines; without it, every supported file directly in the subfolder is used. A rule counts as found when any of its `any` strings occurs, ignoring case, quote style and dashes, in an extracted rule's quotation or statement. A model passes when it finds at least 90 percent of all expected rules and at least 80 percent in every case; the script exits non-zero unless every model passes.
 
-By default only scored cases run. `--all` also runs every other supported file as its own unscored case (a monograph unless `--doc-type` says otherwise), reported with counts only; `--only <folder>` runs one subfolder. Output goes to stdout: per model, one row per case with rules kept, left out, expected found, failed calls and seconds, then totals, cost, PASS or FAIL and the names of missed expected rules. It never prints guideline text, quotations or rule statements, and writes nothing to disk.
+By default only scored cases run. `--all` also runs every other supported file as its own unscored case (a monograph unless `--doc-type` says otherwise), reported with counts only; `--only <folder>` runs one subfolder. Output goes to stdout: per model, one row per case with rules kept, left out, expected found, failed calls, calls made and seconds, then totals, cost, the number of settings questions and of calls the Gateway refused, PASS or FAIL, the names of missed expected rules and the settings each case's questions filled. It never prints guideline text, quotations or rule statements, and writes nothing to disk unless `--save` is given.
 
 ## Measuring paragraph roles
 

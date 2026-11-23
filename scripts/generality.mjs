@@ -3,15 +3,17 @@
 // guidelines kept outside the repository, calling the CAIL Gateway with the caller's own key, and
 // scores each sheet against the rules a case's expected.json says it must contain.
 //
-//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]] [--repeat <n>]
+//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]] [--repeat <n>] [--save <folder>]
 //
 // With --repeat, each case is read n times and, per case, a table shows for each setting of the
 // rule sheet in how many runs it was filled and with which values (text values only as labels).
 //
-// Results go to stdout only: counts, timings, cost and the names of missed expected rules. It never
-// prints or writes guideline text, extracted quotations or rule statements, and never prints the key.
+// Results go to stdout: counts, calls, timings, cost and the names of missed expected rules. It never
+// prints guideline text, extracted quotations or rule statements, and never prints the key. With
+// --save it also writes each rule sheet, as JSON, to the folder named (keep it outside the repository:
+// a sheet quotes the guidelines).
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +24,8 @@ import { pageText } from '../lib/guidelines/pdf-text.js';
 import { normalizeForMatch } from '../lib/rules/quote.js';
 import { DOC_TYPES } from '../lib/rules/schema.js';
 import { modelControls } from '../server/model.js';
-import { rulesPrompt } from '../server/prompts.js';
+import { rulesPrompt, settingsPayload } from '../server/prompts.js';
+import { retryAfterOf } from '../lib/calls/backoff.js';
 
 const GATEWAY = 'https://tools.ailab.gc.cuny.edu';
 // The expected output of one call, as the /api/rules route passes it to modelControls (server/worker.js).
@@ -42,7 +45,8 @@ and calls the CAIL Gateway with the key in CAIL_API_KEY, which pays for every ca
   --only      run only the cases in this subfolder
   --all       also run every other supported file as its own unscored case
   --doc-type  document type of those unscored cases (default ${DEFAULT_DOC_TYPE})
-  --repeat    read each case this many times and tabulate which settings each run filled`;
+  --repeat    read each case this many times and tabulate which settings each run filled
+  --save      write each rule sheet as JSON to this folder (outside the repository: sheets quote the guidelines)`;
 
 // ---------------------------------------------------------------------------------------------
 // Scoring
@@ -218,7 +222,7 @@ export function rulesPayload({ model, docType, group, text, row }) {
   };
 }
 
-const coded = (code, retry) => Object.assign(new Error(`The model call failed: ${code}`), { code, retry });
+const coded = (code, retry, extra = {}) => Object.assign(new Error(`The model call failed: ${code}`), { code, retry, ...extra });
 const countOf = value => (Number.isInteger(value) && value >= 0 ? value : null);
 
 /**
@@ -254,7 +258,9 @@ export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = glo
     }
     if (!response.ok) {
       const code = typeof data?.error?.code === 'string' && /^[\w.:-]{1,80}$/.test(data.error.code) ? data.error.code : `http_${response.status}`;
-      throw coded(code, response.headers.get('x-should-retry') === 'true');
+      const retryAfter = retryAfterOf(response.headers.get('retry-after'));
+      usage.refused = (usage.refused ?? 0) + 1;
+      throw coded(code, response.headers.get('x-should-retry') === 'true', { status: response.status, ...(retryAfter ? { retryAfter } : {}) });
     }
     if (!data || typeof data !== 'object') throw coded('invalid_model_response', false);
     const prompt = countOf(data.usage?.prompt_tokens);
@@ -276,6 +282,18 @@ export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = glo
  */
 export function createCallRules({ key, rows, usage, fetchImpl }) {
   return createGatewayCall({ key, rows, usage, fetchImpl, payloadOf: ({ model, docType, group, text }, row) => rulesPayload({ model, docType, group, text, row }) });
+}
+
+/**
+ * A callSettings for extractRuleSheet (the focused question about settings the reading missed)
+ * that calls the Gateway directly with a CAIL API key, as POST /api/settings does.
+ * @param {{ key: string, rows: Map<string, object>, usage: object, fetchImpl?: typeof fetch }} options
+ */
+export function createCallSettings({ key, rows, usage, fetchImpl }) {
+  return createGatewayCall({ key, rows, usage, fetchImpl, payloadOf: ({ model, docType, slots, text }, row) => {
+    usage.settingsCalls = (usage.settingsCalls ?? 0) + 1;
+    return settingsPayload({ model, docType, slots, text, row });
+  } });
 }
 
 // The public catalog's rows by model id, or null when it cannot be read.
@@ -430,9 +448,10 @@ export function table(header, rows) {
 const percent = (found, of) => (of > 0 ? `${((found / of) * 100).toFixed(1)}%` : '-');
 const tally = codes => Object.entries(codes.reduce((counts, code) => ({ ...counts, [code]: (counts[code] ?? 0) + 1 }), {})).map(([code, count]) => `${code} x${count}`).join(', ');
 
-async function measure(model, cases, { key, rows, log, repeat = 1 }) {
-  const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
+async function measure(model, cases, { key, rows, log, repeat = 1, save }) {
+  const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0, settingsCalls: 0, refused: 0 };
   const callRules = createCallRules({ key, rows: rows ?? new Map(), usage });
+  const callSettings = createCallSettings({ key, rows: rows ?? new Map(), usage });
   const results = [];
   for (const entry of cases) {
     if (entry.texts.length === 0) {
@@ -444,8 +463,10 @@ async function measure(model, cases, { key, rows, log, repeat = 1 }) {
       log(`${model}: reading ${entry.name}${repeat > 1 ? ` (run ${run} of ${repeat})` : ''}`);
       const start = performance.now();
       try {
-        const { sheet, failures } = await extractRuleSheet({ docType: entry.docType, model, guidelines: entry.texts, callRules });
-        results.push({ entry: named, sheet, failures, seconds: (performance.now() - start) / 1000 });
+        const calls = usage.calls;
+        const { sheet, failures, asked } = await extractRuleSheet({ docType: entry.docType, model, guidelines: entry.texts, callRules, callSettings });
+        results.push({ entry: named, sheet, failures, asked, calls: usage.calls - calls, seconds: (performance.now() - start) / 1000 });
+        if (save) await save(named, sheet);
       } catch (error) {
         results.push({ entry: named, error: typeof error?.code === 'string' ? error.code : (error?.name ?? 'error'), seconds: (performance.now() - start) / 1000 });
       }
@@ -468,31 +489,32 @@ function report(model, { usage, results }, row, out) {
     const found = score ? `${score.found}/${score.of}` : '-';
     const name = entry.run ? `${entry.name} (run ${entry.run})` : entry.name;
     if (result.skipped) {
-      rowsOut.push([name, '-', '-', found, '-', 'skipped']);
+      rowsOut.push([name, '-', '-', found, '-', '-', 'skipped']);
       notes.push(`${entry.name}: skipped, no readable file`);
     } else if (result.error) {
-      rowsOut.push([name, '-', '-', found, '-', result.seconds.toFixed(1)]);
+      rowsOut.push([name, '-', '-', found, '-', '-', result.seconds.toFixed(1)]);
       notes.push(`${name}: the run stopped (${result.error})`);
       totals.seconds += result.seconds;
     } else {
-      rowsOut.push([name, result.sheet.rules.length, result.sheet.dropped, found, result.failures.length, result.seconds.toFixed(1)]);
+      rowsOut.push([name, result.sheet.rules.length, result.sheet.dropped, found, result.failures.length, result.calls, result.seconds.toFixed(1)]);
       totals.kept += result.sheet.rules.length;
       totals.dropped += result.sheet.dropped;
       totals.failures += result.failures.length;
       totals.seconds += result.seconds;
       if (result.failures.length) notes.push(`${name}: failed calls: ${tally(result.failures.map(failure => failure.code))}`);
+      if (result.asked?.parts) notes.push(`${name}: settings questions to ${result.asked.parts} parts about ${result.asked.settings.length} settings filled ${result.asked.added.length}${result.asked.added.length ? ` (${result.asked.added.join(', ')})` : ''}`);
     }
     if (score?.missed.length) notes.push(`${name}: missed ${score.missed.join('; ')}`);
   }
   const found = scores.reduce((sum, score) => sum + score.found, 0);
   const of = scores.reduce((sum, score) => sum + score.of, 0);
-  rowsOut.push(['Total', totals.kept, totals.dropped, of ? `${found}/${of}` : '-', totals.failures, totals.seconds.toFixed(1)]);
+  rowsOut.push(['Total', totals.kept, totals.dropped, of ? `${found}/${of}` : '-', totals.failures, usage.calls, totals.seconds.toFixed(1)]);
 
   out(`\nModel ${model}`);
-  out(table(['Case', 'Kept', 'Left out', 'Expected found', 'Failures', 'Seconds'], rowsOut));
+  out(table(['Case', 'Kept', 'Left out', 'Expected found', 'Failures', 'Calls', 'Seconds'], rowsOut));
   const cost = costOf(usage, row);
   const costText = cost === null ? 'unknown' : `${usage.unmetered ? 'at least ' : ''}$${cost.toFixed(4)}`;
-  out(`Tokens: ${usage.prompt} in, ${usage.completion} out, over ${usage.calls} calls${usage.unmetered ? ` (${usage.unmetered} replies without token counts)` : ''}. Cost: ${costText}.`);
+  out(`Tokens: ${usage.prompt} in, ${usage.completion} out, over ${usage.calls} calls (${usage.settingsCalls ?? 0} of them settings questions; ${usage.refused ?? 0} refused by the Gateway, rate limits included)${usage.unmetered ? ` (${usage.unmetered} replies without token counts)` : ''}. Cost: ${costText}.`);
   const verdict = passes(scores);
   const lowest = scores.filter(score => score.of > 0).reduce((low, score) => Math.min(low, score.found / score.of), Infinity);
   out(`Result: ${verdict ? 'PASS' : 'FAIL'}${of ? ` (${percent(found, of)} found overall, lowest case ${(lowest * 100).toFixed(1)}%)` : ' (no scored cases)'}`);
@@ -501,7 +523,9 @@ function report(model, { usage, results }, row, out) {
   for (const result of results) if (result.entry.run) runsByCase.set(result.entry.name, [...(runsByCase.get(result.entry.name) ?? []), result.sheet ?? null]);
   for (const [name, sheets] of runsByCase) {
     out(`\nSettings filled in ${sheets.length} runs of ${name}:`);
-    out(table(['Setting', 'Runs filled', 'Values'], slotFills(sheets).map(row => [row.slot, `${row.filled}/${row.runs}`, row.values.join('; ')])));
+    const fills = slotFills(sheets);
+    out(table(['Setting', 'Runs filled', 'Values'], fills.map(row => [row.slot, `${row.filled}/${row.runs}`, row.values.join('; ')])));
+    out(`Settings filled in all ${sheets.length} runs: ${fills.filter(row => row.filled === sheets.length).length}.`);
   }
   return verdict;
 }
@@ -512,7 +536,7 @@ function report(model, { usage, results }, row, out) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, repeat: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, repeat: { type: 'string' }, save: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -577,7 +601,12 @@ async function main(argv, environment, { out = console.log, err = console.error 
   let allPass = true;
   for (const model of models) {
     if (rows && !rows.has(model)) out(`\n${model} is not in the model catalog: calls go without its model controls and cost is unknown.`);
-    const measured = await measure(model, cases, { key, rows, log: err, repeat });
+    const save = values.save === undefined ? undefined : async (entry, sheet) => {
+      const folder = path.resolve(values.save);
+      await mkdir(folder, { recursive: true });
+      await writeFile(path.join(folder, `${model}-${entry.name.replace(/[^A-Za-z0-9-]+/gu, '_')}${entry.run ? `-run${entry.run}` : ''}.json`), JSON.stringify(sheet));
+    };
+    const measured = await measure(model, cases, { key, rows, log: err, repeat, save });
     allPass = report(model, measured, rows?.get(model), out) && allPass;
   }
   return allPass ? 0 : 1;

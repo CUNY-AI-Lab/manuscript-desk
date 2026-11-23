@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { READINGS, extractRuleSheet } from '../lib/rules/extract.js';
+import { SETTINGS_GROUP, extractRuleSheet } from '../lib/rules/extract.js';
 import { splitGuidelines, splitInTwo } from '../lib/rules/chunk.js';
-import { GROUPS, MAX_RULES, validateSheet } from '../lib/rules/schema.js';
+import { GROUPS, MAX_RULES, slotsFor, validateSheet } from '../lib/rules/schema.js';
 
 // Guideline text written for these tests.
 const G0 = 'Use American spelling throughout, following Merriam-Webster. Please use double quotation marks for all quotations. '
@@ -32,8 +32,8 @@ function fake(answer = request => reply(RULES[request.group])) {
   return { calls, callRules };
 }
 
-// Most tests read each part once; the two-reading default is tested on its own below.
-const run = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, readings: 1, ...options });
+// Most tests ask no settings question (no callSettings); the questions are tested on their own below.
+const run = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, ...options });
 const categories = sheet => sheet.rules.map(rule => rule.category);
 
 test('calls each of the three groups once for a one-part document', async () => {
@@ -330,7 +330,7 @@ function roomy(limit, { code = 'model_output_limit' } = {}) {
       .map(sentence => ({ category: 'other', slot: null, statement: sentence, quote: sentence, mode: 'flag', params: {} })));
   });
 }
-const runBig = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [BIG], callRules, readings: 1, ...options });
+const runBig = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [BIG], callRules, ...options });
 
 test('splitInTwo cuts at the paragraph break nearest the middle, the second half starting a little before', () => {
   const [first, second] = splitInTwo(BIG);
@@ -391,54 +391,114 @@ test('only reads the parts and halves named, and nothing else', async () => {
   assert.deepEqual(again.calls.map(call => [call.group, call.text === BIG]), [['references', true]]);
 });
 
-// ---- Each part is read twice; the second reading adds only settings ----
+// ---- After the reading, a focused question for the settings no reading filled ----
 
 const SPELLING = RULES.style[0];
 const FOOTNOTES = RULES.references[0];
 const PLAIN = RULES.structure[0];
+const FIGURES = { category: 'figures-tables', slot: 'figures.files', statement: 'Supply figures as separate files.', quote: 'with figures supplied as separate files', mode: 'flag', params: { separate: true } };
 
-test('by default each part is read twice', async () => {
-  assert.equal(READINGS, 2);
+// A fake callSettings: answers with `answer(request, attempt)` and records every request.
+function fakeSettings(answer = () => reply([])) {
+  const calls = [];
+  const callSettings = async request => {
+    calls.push(request);
+    return answer(request, calls.length);
+  };
+  return { calls, callSettings };
+}
+
+test('each part is asked once about the settings no reading filled, after the readings', async () => {
   const { calls, callRules } = fake();
+  const settings = fakeSettings(() => reply([FIGURES]));
   const seen = [];
-  const { sheet, failures } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, onProgress: event => seen.push(event) });
-  assert.equal(calls.length, 6);
+  const signal = new AbortController().signal;
+  const { sheet, failures, asked } = await run(callRules, { callSettings: settings.callSettings, signal, onProgress: event => seen.push(event) });
+  assert.equal(calls.length, 3, 'one reading per group');
+  assert.equal(settings.calls.length, 1, 'one question for the one part');
+  const [question] = settings.calls;
+  const expected = slotsFor('article').filter(slot => !['spelling.variety', 'notes.kind'].includes(slot));
+  assert.deepEqual(question, { model: 'glm-5.3', docType: 'article', slots: expected, text: G0, signal });
+  assert.deepEqual(asked, { settings: expected, parts: 1, added: ['figures.files'] });
   assert.deepEqual(failures, []);
-  assert.deepEqual(categories(sheet), ['spelling', 'notes', 'files'], 'the same answer twice gives each rule once');
-  assert.deepEqual(seen.at(-1), { done: 6, total: 6 });
-  await assert.rejects(extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, readings: 3 }), /readings/);
+  assert.deepEqual(sheet.rules.map(rule => rule.slot), ['spelling.variety', 'notes.kind', 'figures.files', null]);
+  assert.deepEqual(seen.at(-1), { done: 4, total: 4 });
 });
 
-test('a setting only the second reading found is kept; its plain rules are not added again', async () => {
-  const { callRules } = fake((request, attempt) => {
-    if (request.group === 'style') return reply(attempt === 1 ? [] : [SPELLING, { ...PLAIN, category: 'spelling', quote: 'following Merriam-Webster', statement: 'A plain rule only the second reading gave.' }]);
-    if (request.group === 'structure') return reply(attempt === 1 ? [PLAIN] : [{ ...PLAIN, statement: 'Different wording of the same rule.' }, { ...SPELLING, quote: 'not in the guidelines at all' }]);
-    return reply([]);
-  });
-  const { sheet } = await run(callRules, { readings: 2 });
-  assert.deepEqual(sheet.rules.map(rule => [rule.slot, rule.statement]), [['spelling.variety', 'Use US spelling.'], [null, 'Submit a Word file.']]);
-  assert.equal(sheet.dropped, 0, 'what the second reading could not confirm is not counted as left out');
+test('a settings answer counts only as a setting it was asked for, with its slot and a verified quotation', async () => {
+  const { callRules } = fake();
+  const settings = fakeSettings(() => reply([
+    FIGURES,
+    { ...FIGURES, slot: null, statement: 'A plain rule.' },
+    { ...SPELLING, params: { variety: 'uk' } },
+    { ...FIGURES, slot: 'figures.callouts', params: { required: true }, quote: 'not in the guidelines at all' },
+    { ...FIGURES, slot: 'figures.numbering', params: { per: 'sometimes' } },
+    'not a rule',
+  ]));
+  const { sheet } = await run(callRules, { callSettings: settings.callSettings });
+  assert.deepEqual(sheet.rules.map(rule => [rule.slot, rule.conflict ?? false]), [['spelling.variety', false], ['notes.kind', false], ['figures.files', false], [null, false]],
+    'a setting not asked for, a plain rule, an unverified quotation and a setting with wrong params are not added');
+  assert.equal(sheet.dropped, 0, 'what a settings answer could not confirm is not counted as left out');
 });
 
-test('two readings that fill a setting differently make a conflict', async () => {
-  const { callRules } = fake((request, attempt) => (request.group === 'references'
-    ? reply([attempt === 1 ? FOOTNOTES : { ...FOOTNOTES, params: { kind: 'endnotes' } }]) : reply([])));
-  const { sheet } = await run(callRules, { readings: 2 });
+test('two parts that state a setting differently make a conflict; no question is asked when nothing is missing', async () => {
+  const { callRules } = fake(() => reply([]));
+  const parts = splitGuidelines(LONG);
+  assert.equal(parts.length, 2);
+  const settings = fakeSettings((request, n) => reply(n === 1 ? [{ ...FOOTNOTES, quote: 'Sentence 1 states one more requirement' }] : [{ ...FOOTNOTES, params: { kind: 'endnotes' }, quote: 'Sentence 1150 states one more requirement' }]));
+  const { sheet } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [LONG], callRules, callSettings: settings.callSettings });
+  assert.equal(settings.calls.length, 2);
   assert.deepEqual(sheet.rules.map(rule => [rule.params.kind, rule.conflict]), [['footnotes', true], ['endnotes', true]]);
+  const none = fakeSettings();
+  const all = slotsFor('article');
+  const result = await run(fake().callRules, { callSettings: none.callSettings, known: all });
+  assert.equal(none.calls.length, 0);
+  assert.deepEqual(result.asked, { settings: [], parts: 0, added: [] });
 });
 
-test('when one reading fails the other gives the rules and no failure is reported; when both fail, the first one\'s failure is', async () => {
-  const once = fake((request, attempt) => {
-    if (request.group === 'structure' && attempt === 1) throw coded('upstream_timeout', false);
+test('a failed settings question is a failure of the settings group, and a second try asks only that part again', async () => {
+  const settings = fakeSettings(() => { throw coded('upstream_timeout', false); });
+  const first = await run(fake().callRules, { callSettings: settings.callSettings });
+  assert.deepEqual(first.failures, [{ group: SETTINGS_GROUP, doc: 0, part: 0, code: 'upstream_timeout', message: 'upstream_timeout' }]);
+  assert.equal(first.sheet.rules.length, 3, 'the readings are kept');
+  const again = fake();
+  const second = fakeSettings(() => reply([FIGURES]));
+  const { sheet, failures } = await run(again.callRules, { callSettings: second.callSettings, only: first.failures, known: ['spelling.variety', 'notes.kind'] });
+  assert.equal(again.calls.length, 0, 'no part is read again');
+  assert.equal(second.calls.length, 1);
+  assert.ok(!second.calls[0].slots.includes('notes.kind'), 'settings the sheet has are not asked for');
+  assert.deepEqual(failures, []);
+  assert.deepEqual(sheet.rules.map(rule => rule.slot), ['figures.files']);
+});
+
+test('a rate-limit refusal is asked again after pauses that grow, or after its Retry-After; a spent allowance is not', async () => {
+  const pauses = [];
+  const wait = async ms => { pauses.push(ms); };
+  const limited = fake((request, attempt) => {
+    if (request.group === 'style' && attempt <= 2) throw { code: 'upstream_rate_limited', status: 429, retry: true };
+    if (request.group === 'references' && attempt === 1) throw { code: 'upstream_rate_limited', status: 429, retry: true, retryAfter: 5 };
+    if (request.group === 'structure') throw { code: 'quota_exceeded', status: 429, retry: false };
     return reply(RULES[request.group]);
   });
-  const first = await run(once.callRules, { readings: 2 });
-  assert.deepEqual(first.failures, []);
-  assert.deepEqual(categories(first.sheet), ['spelling', 'notes', 'files']);
-  const both = fake(request => {
-    if (request.group === 'structure') throw coded('upstream_timeout', false);
-    return reply(RULES[request.group]);
-  });
-  const second = await run(both.callRules, { readings: 2 });
-  assert.deepEqual(second.failures, [{ group: 'structure', doc: 0, part: 0, code: 'upstream_timeout', message: 'upstream_timeout' }]);
+  const { sheet, failures } = await run(limited.callRules, { wait });
+  assert.deepEqual(pauses.sort((a, b) => a - b), [2000, 4000, 5000]);
+  assert.deepEqual(categories(sheet), ['spelling', 'notes']);
+  assert.deepEqual(failures.map(failure => [failure.group, failure.code]), [['structure', 'quota_exceeded']]);
+  assert.equal(limited.calls.filter(call => call.group === 'structure').length, 1);
+  pauses.length = 0;
+  const always = fake(() => { throw { code: 'upstream_rate_limited', status: 429, retry: true }; });
+  const result = await run(always.callRules, { wait });
+  assert.equal(always.calls.length, 12, 'each call asked once and three more times');
+  assert.deepEqual(pauses.filter(ms => ms === 8000).length, 3);
+  assert.deepEqual(result.failures.map(failure => failure.code), ['upstream_rate_limited', 'upstream_rate_limited', 'upstream_rate_limited']);
+});
+
+test('stopping during a pause after a rate-limit refusal ends the run', async () => {
+  const controller = new AbortController();
+  const limited = fake(() => { throw { code: 'upstream_rate_limited', status: 429, retry: true }; });
+  const wait = (ms, signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  const running = run(limited.callRules, { wait, signal: controller.signal });
+  await tick(5);
+  controller.abort(new Error('stopped'));
+  await assert.rejects(running, /stopped/);
 });

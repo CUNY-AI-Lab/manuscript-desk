@@ -35,7 +35,7 @@ import { extractRuleSheet } from '../lib/rules/extract.js';
 import { validateSheet } from '../lib/rules/schema.js';
 import { rolesPayload } from '../server/prompts.js';
 import { checkGold, selectChapters } from './roles-eval.mjs';
-import { costOf, createCallRules, createGatewayCall, readCaseFile, readCatalog, table } from './generality.mjs';
+import { costOf, createCallRules, createCallSettings, createGatewayCall, readCaseFile, readCatalog, table } from './generality.mjs';
 
 const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
 const DEFAULT_FOLDER = fileURLToPath(new URL('../../manuscript-desk-guidelines', import.meta.url));
@@ -285,7 +285,7 @@ async function extractedSheet({ work, root, guidelines, environment, usage, rows
   if (!texts.length) throw new Error('No guidelines file could be read.');
   const key = gatewayKey(environment);
   log(`${DEFAULT_MODEL}: reading the guidelines into a rule sheet (cached afterwards)`);
-  const { sheet, failures } = await extractRuleSheet({ docType: expected.docType, model: DEFAULT_MODEL, guidelines: texts, callRules: createCallRules({ key, rows, usage }) });
+  const { sheet, failures } = await extractRuleSheet({ docType: expected.docType, model: DEFAULT_MODEL, guidelines: texts, callRules: createCallRules({ key, rows, usage }), callSettings: createCallSettings({ key, rows, usage }) });
   await writeFile(file, JSON.stringify({ model: DEFAULT_MODEL, failures: failures.map(({ group, code }) => ({ group, code })), sheet }));
   return sheet;
 }

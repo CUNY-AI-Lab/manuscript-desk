@@ -1,8 +1,8 @@
 import { CAIL_CANONICAL_ISSUER, loadIdentityVerifierConfig, readIdentityKeyring, verifyIdentityJwt, verifyKeyringGatewayJwt } from '@cuny-ai-lab/cail-identity';
 import { CailError, createCailClient } from '@cuny-ai-lab/cail-client';
-import { DOC_TYPES } from '../lib/rules/schema.js';
+import { DOC_TYPES, slotsFor } from '../lib/rules/schema.js';
 import { modelControls } from './model.js';
-import { GROUPS, rolesPayload, rulesPrompt, runningTitlesPayload } from './prompts.js';
+import { GROUPS, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -181,6 +181,19 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
         const payload = { model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: rulesPrompt({ docType: body.docType, group: body.group }) }, { role: 'user', content: body.text }], ...modelControls(await catalogRow(model, signal), RULES_OUTPUT_TOKENS) };
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this part of the guidelines. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      if (path === '/api/settings' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph or an edited collection.');
+        const offered = slotsFor(body.docType);
+        if (!Array.isArray(body.slots) || body.slots.length === 0 || new Set(body.slots).size !== body.slots.length || !body.slots.every(slot => offered.includes(slot))) throw new AppError('invalid_request', 'The request named a setting this tool does not read. Reload the page and try again.');
+        // The text is never echoed in an error, logged or stored.
+        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
+        const payload = settingsPayload({ model, docType: body.docType, slots: body.slots, text: body.text, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished this question about the guidelines. Try again, or choose another model.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/roles' && request.method === 'POST') {

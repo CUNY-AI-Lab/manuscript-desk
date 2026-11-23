@@ -48,9 +48,15 @@ const catalog = await readFile(join(FIXTURES, 'catalog-2026-11-09.json'), 'utf8'
 const quota = { object: 'quota', unit: 'microdollar', limit: 50000000, estimated_used: 105038, estimated_remaining: 49894962, used_percent: 0, window_seconds: 2592000, window_technique: 'fixed', calculated_at: 1794285677 };
 const json = (route, body, status = 200, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers: { 'x-should-retry': 'false', ...headers }, body: JSON.stringify(body) });
 
-// Mocks the four routes; `rules` answers POST /api/rules from the request body.
+// Mocks the routes; `rules` answers POST /api/rules from the request body, and POST /api/settings
+// (the focused question about settings the reading missed) answers that no setting is stated.
 async function mock(context, rules) {
   const calls = [];
+  calls.settings = [];
+  await context.route('**/manuscript/api/settings', route => {
+    calls.settings.push(JSON.parse(route.request().postData()));
+    return json(route, { request_id: 'r', content: JSON.stringify({ rules: [] }) });
+  });
   await context.route('**/manuscript/api/session', route => json(route, { authenticated: true }));
   await context.route('**/manuscript/api/quota', route => json(route, quota));
   await context.route('**/manuscript/api/catalog', route => route.fulfill({ status: 200, contentType: 'application/json', body: catalog }));
@@ -119,14 +125,16 @@ try {
   assert.deepEqual(await rule.locator('.rule-settings li').allTextContents(), ['Quotation marks: Double (“ ”)']);
   assert.equal(await page.locator('#category-quotations').textContent(), 'Quotations');
   assert.equal(await rule.getByLabel('What to do').inputValue(), 'fix');
-  assert.equal(calls.length, 6, 'two readings per group of a monograph');
+  assert.equal(calls.length, 3, 'one reading per group of a monograph');
+  assert.equal(calls.settings.length, 1, 'then one question about the settings no reading filled');
+  assert.ok(!calls.settings[0].slots.includes('quotes.primary') && calls.settings[0].slots.includes('notes.kind'));
   for (const { body, headers } of calls) {
     assert.equal(body.model, DEFAULT_MODEL);
     assert.equal(body.docType, 'monograph');
     assert.ok(body.text.includes(SENTENCE) && !body.text.includes('\r'));
     assert.equal(headers['content-type'], 'application/json');
   }
-  log('read: 6 calls (style, references, structure, each read twice); the traced rule shows once with its quotation and its setting in words; notice counts the left-out one');
+  log('read: 3 reading calls (style, references, structure) and 1 settings question; the traced rule shows once with its quotation and its setting in words; notice counts the left-out one');
 
   const toggle = rule.getByRole('switch', { name: 'Use this rule' });
   await toggle.uncheck();
@@ -291,8 +299,8 @@ try {
   // ---- A failed group, "Try again", and two rules that disagree ----
   const SINGLE = 'Single quotation marks are kept for quotations within quotations.';
   const context4 = await browser.newContext();
-  // Both readings of the references group fail on the first reading of the guidelines.
-  let referencesFail = 2;
+  // The references group fails on the first reading of the guidelines.
+  let referencesFail = 1;
   const calls4 = await mock(context4, (route, body) => {
     if (body.group === 'references' && referencesFail > 0) {
       referencesFail -= 1;
@@ -328,7 +336,7 @@ try {
   const before = calls4.length;
   await page4.getByRole('button', { name: 'Try again' }).click();
   await page4.locator('.rule', { hasText: 'Use endnotes.' }).waitFor();
-  assert.equal(calls4.length - before, 2, 'only the failed part is read again (twice, as every part is)');
+  assert.equal(calls4.length - before, 1, 'only the failed part is read again');
   assert.equal(await page4.getByRole('button', { name: 'Try again' }).count(), 0);
   await page4.locator('.conflicts .rule', { hasText: 'Use single quotation marks.' }).getByRole('button', { name: 'Keep this rule' }).click();
   assert.equal(await page4.locator('.conflicts').count(), 0);
@@ -362,7 +370,7 @@ try {
   const before6 = calls6.length;
   await page6.getByRole('button', { name: 'Read the guidelines' }).click();
   await page6.locator('#error-banner', { hasText: 'The guidelines could not be read, so the rule sheet below was not changed.' }).waitFor();
-  assert.equal(calls6.length - before6, 6, 'every call failed');
+  assert.equal(calls6.length - before6, 3, 'every reading failed');
   assert.deepEqual(await page6.locator('#error-banner p').allTextContents(), [
     'The guidelines could not be read, so the rule sheet below was not changed.',
     'Your model allowance is used up, so this part was not read.',

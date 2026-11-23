@@ -2,6 +2,8 @@
 // It never retries: a caller may retry once when an ApiError says `retry` (the Worker's
 // x-should-retry header). A lost session (401) runs onLostSession, then navigates the page to the
 // launch path so sign-in restarts, and the call never settles.
+import { retryAfterOf } from '../../lib/calls/backoff.js';
+
 const LOST_SESSION = new Set(['authentication_required', 'invalid_credential', 'session_invalid']);
 const LAUNCH_PATH = '/launch/manuscript';
 const LAUNCH = /^\/launch\/[a-z0-9-]+$/;
@@ -9,10 +11,10 @@ const LAUNCH = /^\/launch\/[a-z0-9-]+$/;
 const BROWSER_TIMEOUT_MS = 185000;
 
 export class ApiError extends Error {
-  constructor({ code, message, status = 0, retry = false, requestId = null }) {
+  constructor({ code, message, status = 0, retry = false, requestId = null, retryAfter }) {
     super(message);
     this.name = 'ApiError';
-    Object.assign(this, { code, status, retry, requestId });
+    Object.assign(this, { code, status, retry, requestId, ...(retryAfter ? { retryAfter } : {}) });
   }
 }
 
@@ -67,6 +69,7 @@ export function createApi({
       status: response.status,
       message: typeof envelope?.message === 'string' && envelope.message ? envelope.message : 'The CUNY AI Lab service is unavailable. Try again later.',
       retry: response.headers.get('x-should-retry') === 'true',
+      retryAfter: retryAfterOf(response.headers.get('retry-after')),
       requestId: typeof envelope?.request_id === 'string' ? envelope.request_id : null,
     });
   }
