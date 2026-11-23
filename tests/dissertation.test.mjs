@@ -187,3 +187,21 @@ test('the page builds every file for a dissertation with the built-in sheet, all
   for (const file of outputs.files) assert.equal(validateDocx(file.bytes).ok, true, file.name);
   assert.ok(outputs.summary.flagged.some(line => /^Accessibility: 8 places \(4 must fix, 3 should fix, 1 to check\)/u.test(line)));
 });
+
+test('a picture marked decorative needs no alt text, and an alt text a program wrote is to check', async () => {
+  const { strToU8, zipSync } = await import('fflate');
+  const { bytes, roles } = dissertation();
+  const files = unzipSync(bytes);
+  let xml = strFromU8(files['word/document.xml']);
+  // The first picture becomes decorative; the second gets a file name as its alt text.
+  xml = xml.replace('<wp:docPr id="1" name="Picture 1"/>', '<wp:docPr id="1" name="Picture 1"><a:extLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:ext uri="{C183D7F6-B498-43B3-948B-1728B52AA6E4}"><adec:decorative xmlns:adec="http://schemas.microsoft.com/office/drawing/2017/decorative" val="1"/></a:ext></a:extLst></wp:docPr>');
+  xml = xml.replace('<wp:docPr id="2" name="Screenshot 2"/>', '<wp:docPr id="2" name="Screenshot 2" descr="image2.png"/>');
+  files['word/document.xml'] = strToU8(xml);
+  const changed = zipSync(files);
+  const facts = readAccessibility(changed);
+  assert.deepEqual(facts.pictures.map(picture => [picture.decorative, picture.descr]), [[true, ''], [false, 'image2.png'], [false, 'A hand-drawn chart of a bay with three soundings marked.']]);
+  const result = formatDocx({ bytes: changed, roles, sheet: preset(), date: DATE });
+  const { findings } = runChecks({ paragraphs: readDocx(changed).paragraphs, roles, report: result.report, sheet: preset(), accessibility: readAccessibility(result.bytes) });
+  const alt = findings.filter(finding => finding.kind === 'a11y-alt-text').map(finding => finding.severity);
+  assert.deepEqual(alt, ['check'], 'the decorative picture is left alone; the file name is to check');
+});
