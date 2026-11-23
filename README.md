@@ -6,7 +6,20 @@ It is for CUNY AI Lab members, behind CUNY Login, at `https://tools.ailab.gc.cun
 
 ## Privacy
 
-The file is opened in the browser and is not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms. Nothing is stored on the server. Work in progress is kept in this browser only, and is cleared when you choose Start over or after 24 hours.
+Your files are opened in the browser and are not uploaded. To read the guidelines and to label the manuscript's paragraphs, passages of their text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when the rule sheet asks for running titles, the chapter titles are sent the same way. The manuscript is formatted in the browser. Nothing is stored on the server. The browser keeps the guidelines' text, the rule sheet, the paragraph labels and the author's corrections to them, but not the manuscript or its text, and clears them on Start over or after 24 hours.
+
+## The Formatter page
+
+`/manuscript/format/` takes a scholar from guidelines to finished files in six steps:
+
+1. What is being submitted: an article, a monograph or an edited collection.
+2. The guidelines: PDF or Word files, or pasted text, read in the browser.
+3. The rule sheet read out of them (`POST /manuscript/api/rules`, each part read twice), each rule with the sentence it came from, to edit, switch off, add to, download or load.
+4. The manuscript: one `.docx`, read in the browser (`lib/docx/read.js`) and held in the page's memory only, with its size in words and paragraphs.
+5. What each paragraph is: "Read the manuscript" labels the paragraphs through `POST /manuscript/api/roles`, stating the number of model calls first, with progress and Stop. The review shows, by chapter, the paragraphs that are not body text or bibliography entries (those the model could not label first), each with an excerpt, its label in a menu the scholar can change and its neighbours on demand; a filter shows every paragraph or one kind, with counts. The labels are kept in the browser by a hash of the file, with the corrections; after a reload or a sign-in the scholar chooses the same file again and nothing is labelled again (a stopped run resumes from the passages already answered), while another file is labelled from the start.
+6. Format and download: the formatter, the To-do checks, the comments, the To-dos list and the companion documents run in the browser (`web/format/output-state.js`), running titles are asked of `POST /manuscript/api/running-titles` only when the rule sheet calls for them, and every file offered has passed the structural validator. A summary says what was changed, with counts, what was flagged, and what the author still has to supply.
+
+The page's decisions are pure functions that load under Node (`web/format/app.js` for steps 1 to 3, `manuscript-state.js` for 4 and 5, `output-state.js` for 6) and are unit-tested; `manuscript-step.js` and `output-step.js` draw steps 4 to 6. Every text from the manuscript, the guidelines or a model is set with `textContent`, which `tests/html-sinks.test.mjs` enforces.
 
 ## How it runs
 
@@ -29,7 +42,7 @@ npx wrangler deploy --dry-run --outdir /tmp/cail-manuscript-dry   # offline bund
 
 The tests stub every upstream and never call a model.
 
-A browser smoke test of the built Formatter page, with the API mocked by request interception, lives in `tests/browser/` and is not part of `npm test` or `npm run check`. Playwright is not a dependency; point the script at any copy of it:
+A browser smoke test of the built Formatter page, with the API mocked by request interception, lives in `tests/browser/` and is not part of `npm test` or `npm run check`. It goes through all six steps, choosing the invented manuscripts in `tests/fixtures/` (written by `node tests/fixtures/make-manuscripts.mjs`), and checks that every download is a valid Word file. Playwright is not a dependency; point the script at any copy of it:
 
 ```bash
 npm run build
@@ -52,7 +65,7 @@ Layout:
 CAIL_API_KEY=sk-cail-... npm run dev
 ```
 
-This builds `dist/` and serves it with the Worker's real routes at `http://127.0.0.1:8787/manuscript/format/` (`PORT` sets another port). The Formatter works as in production: the model menu and allowance load, and reading guidelines makes real model calls through the public CAIL Gateway. Every call is charged to the key in `CAIL_API_KEY`, so it spends the key owner's own model allowance; the allowance shown is that key's.
+This builds `dist/` and serves it with the Worker's real routes at `http://127.0.0.1:8787/manuscript/format/` (`PORT` sets another port). The Formatter works as in production, through all six steps: the model menu and allowance load, and reading the guidelines, labelling the manuscript and proposing running titles make real model calls through the public CAIL Gateway (a book of 1,460 paragraphs took 85 labelling calls and under five minutes). Every call is charged to the key in `CAIL_API_KEY`, so it spends the key owner's own model allowance; the allowance shown is that key's.
 
 Sign-in is simulated. The server makes a throwaway signing key when it starts and signs both identity assertions for one fixed local person on every request, so there is no CUNY Login; it drops any credential the browser sends and puts the key on the Gateway calls instead. It listens on 127.0.0.1 only, answers only requests addressed to `localhost` or `127.0.0.1` on its port, and accepts a POST only from its own pages. It logs one line per API request (method, path, status, milliseconds), never a body, and never prints the key. Without `CAIL_API_KEY` the pages are served but model calls fail.
 
@@ -63,8 +76,10 @@ This mode exists only in the dev script (`scripts/dev.mjs`, `scripts/dev-server.
 `scripts/generality.mjs` measures how well the rule sheet comes out of real publishers' guidelines with real models. It runs the product's own reading, prompt, model controls and extraction code, calls the Gateway at `https://tools.ailab.gc.cuny.edu/v1/chat/completions` directly, and checks each sheet against rules we have written down as expected.
 
 ```bash
-CAIL_API_KEY=... npm run generality -- --models deepseek-v4.1-flash-1017,other-model [--only <folder>] [--all [--doc-type article]]
+CAIL_API_KEY=... npm run generality -- --models deepseek-v4.1-flash-1017,other-model [--only <folder>] [--all [--doc-type article]] [--repeat <n>]
 ```
+
+`--repeat <n>` reads each case n times and adds, per case, a table of the rule sheet's settings: in how many runs each was filled and with which values (a text value, such as a font name or a marker's example, only as a label).
 
 Every call is charged to the key in `CAIL_API_KEY`, so a run spends your own model budget; the script reports the tokens used and their cost from the public model catalog. The key is read only from that variable and never printed.
 
@@ -99,8 +114,10 @@ A case is a folder under `manuscripts/` in `MANUSCRIPT_DESK_GUIDELINES` with `so
 `scripts/format-eval.mjs` measures it against a formatting job done by hand:
 
 ```bash
-npm run format-eval -- [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--pdf]
+npm run format-eval -- [--predicted | --roles <file>] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--score <file>] [--pdf]
 ```
+
+`--roles` takes the roles from a file (as the Formatter page keeps them), and `--score` measures a formatted file made elsewhere, such as a download from the page: the script formats the source with the same roles and sheet, checks that the file has the same paragraphs, text and styles, and measures that file.
 
 A case is a folder under `manuscripts/` in `MANUSCRIPT_DESK_GUIDELINES` with `source.docx`, `gold-roles.json` and the hand-formatted `.docx` in `reference/`. The script formats the source with the gold roles (or, with `--predicted`, roles from the labelling stage) and a rule sheet (`hand` is a short sheet written for the case, `extracted` the product's own extraction from the publisher's guidelines), then prints counts only: paragraphs matched to the reference by their text, style agreement through the committed map in `docs/eval/brill-style-map.json`, sections, words (any change no declaration explains is a failure, and rejecting every tracked change must give back the source's words), the elements carried over, and the validator's result. The output and any model answer are written to the case's `work/` folder and model answers are reused from there, so nothing is paid for twice; model calls, made only when a cache is missing, use the key in `CAIL_API_KEY`. With `--pdf` it also converts the output with LibreOffice, if installed, to see that it opens. The measured runs are in [`docs/eval/brill-loop.md`](docs/eval/brill-loop.md).
 

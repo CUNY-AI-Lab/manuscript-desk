@@ -450,3 +450,211 @@ it leaves silent what it changed silently; most extras are those two habits.
 Spent in this round: $0.088 (three extractions of the guidelines, $0.087, one of them with round 2's
 code to separate noise from the new slots; two running-title calls, $0.0008). Every answer is
 cached in the case's `work/` folder.
+
+## Round 4: the page, and two reliability fixes
+
+The stage: everything rounds 1 to 3 built as library code is now reachable from the Formatter page,
+and two problems the measurements exposed are fixed first.
+
+### A part that runs out of output room
+
+A rules call that ended with `model_output_limit` lost that part of the guidelines (one publisher's
+guide fell from 27 to 15 of 30 expected requirements on such a run). `extractRuleSheet` now splits
+the part in two at the paragraph break nearest its middle (`splitInTwo` in `lib/rules/chunk.js`, the
+second half starting a little before the cut) and reads each half as its own call; a half that runs
+out of room again is recorded as a failure with its half, and nothing is split further. Other
+failures are unchanged. An `only` option reads just the parts or halves named, which the page's
+"Try again" uses. `labelRoles` does the same for a passage of paragraphs, and leaves a half that
+failed again out of its second pass, which would fail the same way. Tests use fake models that run
+out of room above a size.
+
+### Making the rule sheet's settings stable
+
+The same guidelines filled between 3 and 9 settings on different runs. Measured with
+`npm run generality -- --only brill --repeat 5` (and a private driver of the same functions that kept
+each sheet), five runs each, `deepseek-v4.1-flash-1017`:
+
+1. The route's controls are what it intends on this model: temperature 0, thinking off
+   (`enable_thinking: false`; no reasoning text in the reply). The code adds no nondeterminism: results
+   keep task order whatever finishes first, and the merge is order-stable. A short invented request
+   gave the same answer twice. On the full guidelines the answers still vary from run to run: the
+   provider is not deterministic at temperature 0, so the variance had to be handled, not removed.
+2. The prompt listed each setting by name and allowed values only. Each slot now has a line saying
+   when it applies (`SLOT_USES` in `lib/rules/schema.js`), and the prompt says a requirement a slot
+   describes takes that slot.
+3. Each part is read twice (`READINGS` in `lib/rules/extract.js`): the first reading that read
+   everything gives the rules, the other adds only the settings it found with a verified quotation;
+   two readings that fill a setting differently become a conflict for the author. A part counts as
+   failed only when both readings fail.
+
+Runs filled, of five, per setting (values in brackets; "conflict" means a run held rules that
+disagree, which the sheet marks for the author). "First wording" is the slot instruction as first
+written, which cost recall on another journal (below); "final" is the code as committed, with the
+second wording and two readings.
+
+| Setting | Before (one reading) | First wording, one reading | First wording, two readings | Final |
+|---|---|---|---|---|
+| headings.case | 5 (title) | 5 | 5 | 5 |
+| headings.numbering | 5 (decimal) | 5 | 5 | 5 |
+| notes.restart | 5 (chapter) | 5 | 5 | 5 |
+| references.repeated-author | 5 (name) | 5 | 5 | 5 |
+| titles.quotes | 5 (not allowed) | 5 | 5 | 5 |
+| citations.system | 4 (other) | 5 | 5 | 5 |
+| figures.files | 4 (separate) | 5 | 5 | 5 |
+| notes.titles | 3 (not allowed) | 5 | 5 | 5 |
+| figures.numbering | 4 (chapter) | 5 (conflict in 1) | 5 (conflict in 5) | 5 (conflict in 1) |
+| figures.markers | 1 | 5 (conflict in 4) | 5 (conflict in 5) | 5 (conflict in 5) |
+| chapters.subtitle | 1 (split) | 4 | 5 | 5 |
+| keywords.count | 0 | 3 (6 to 10) | 5 | 4 |
+| running-title.length | 1 (60) | 4 | 5 | 4 |
+| abstract.words | 0 | 3 (200) | 5 | 3 |
+| figures.callouts | 4 | 3 | 4 | 3 |
+| layout.font | 1 | 4 | 5 (conflict in 1) | 0 |
+| spelling.variety | 1 (us) | 1 | 1 | 1 |
+| length.words | 0 | 2 (both empty) | 0 | 0 |
+| Settings filled in all five runs | 5 | 10 | 15 | 11 |
+| Expected rules found | 115/125 | 119/125 | 120/125 | 117/125 |
+| Cost of five runs (catalog prices) | $0.144 | $0.147 | $0.257 | $0.287 |
+
+Each setting keeps the same value in every run in which it is filled, apart from the conflicts. The
+two figure settings are conflicts because the guidelines state both a by-chapter and a whole-work
+figure number and show more than one form of placement marker; the author settles them in step 3
+(round 2 met the same disagreement once). The title split, whose absence left the titles unsplit in
+round 3's extracted sheet, is filled in all five final runs. It was missing, though, in the
+guidelines reading of the end-to-end run below, a sixth run of the final code, which filled 10
+settings without the split, the abstract length, the keyword count, the running title or the font.
+So the final code fills 11 settings every time against 5 before, and the rest still vary. With two
+readings, the Gateway's rate limit refused calls often enough that four parts failed in ten runs
+(three in two runs with the first wording, one in the final runs); a part counts as failed only
+when both its readings are refused.
+
+The first wording of the slot instruction ("always takes that slot, even when the sentence also says
+other things") filled more settings but cost recall elsewhere. Over all 18 guideline cases it found
+398 of 438 expected rules. One journal's guidelines fell to 8 and 10 of 17 in two runs, because the
+heading levels' typefaces were folded into copies of the headings' capitals setting, which the merge
+then removes as duplicates. The prompt now says each requirement is its own rule, and that what a
+slot does not capture is a separate rule with no slot, even in the same sentence (that journal: 17
+and 16 of 17).
+
+Generality, `npm run generality -- --models deepseek-v4.1-flash-1017`, all 18 cases, final code:
+**414 of 438 expected rules (94.5%), no failed call, lowest case 88.2%: PASS**, against the last
+recorded 411 (with one failed call; 423 counting that case's re-run). 162 calls, $0.63 at catalog
+prices.
+
+### What the page does now
+
+After the three steps of the rule sheet, the Formatter page has:
+
+4. **Manuscript.** One `.docx`, read in the browser with `lib/docx/read.js` and held in the page's
+   memory only; a file the reader cannot open gets its plain message. The size is shown in words and
+   paragraphs.
+5. **What each paragraph is.** "Read the manuscript" states first how many paragraphs go to the model
+   in how many passages, then labels them through `/api/roles` with progress and Stop. The review is
+   built for a long book: by default it shows only the paragraphs that are not body text or
+   bibliography entries (plus any the scholar corrected), grouped by chapter (a chapter starts at a
+   title block), paragraphs the model could not label first; each has its first 120 characters, its
+   label in plain words in a menu, and its neighbours on demand. A filter shows every paragraph or one
+   kind, with counts per kind; above it, a notice says a wrong label is the most damaging mistake the
+   tool can make. A correction is saved at once. Paragraphs left unlabelled can be tried again alone.
+6. **Format and download.** The formatter, the checks, the comments, the To-dos list and the
+   companion documents run in the browser (`web/format/output-state.js`); running titles are asked of
+   `/api/running-titles` only when the sheet has a running-title rule. Every file offered has passed
+   the structural validator. A summary gives what was changed, with counts, what was flagged by kind,
+   what the author still has to supply, and what was not done (settings in conflict, titles that could
+   not be proposed). A formatter failure offers nothing and says why; a failed re-run keeps the files
+   made before; files made from an older sheet or older labels are marked as out of date.
+
+What the browser keeps (IndexedDB, 24 hours, cleared by Start over), under its own key beside the rule
+sheet's: the file's SHA-256, its paragraph count and name, the roles and the corrections by paragraph
+index, the failures by index, and, during a run, each answered passage reduced to its roles (keyed by
+a hash of the model and the passage). No text of the manuscript is kept, and the file itself never
+leaves the page. After a reload or a sign-in, the same file chosen again is recognised by its hash and
+not labelled again; a run that was stopped or interrupted resumes without paying for the passages
+already answered; another file is said to be another file and is labelled from the start, after a
+question. The privacy statement now says what each step sends and what the browser keeps.
+
+The decisions are pure functions tested under Node (`tests/manuscript-page.test.mjs`, 18 tests:
+size, labelling plan, saved record holds no word of the manuscript, untrusted restore, same and other
+file, corrections, retry merging, review grouping and filters, excerpts and neighbours, downloads
+offered, running titles only on a rule, failure and re-run, staleness, summary wording without
+jargon). The browser smoke test (mocked API) chooses an invented manuscript written by
+`tests/fixtures/make-manuscripts.mjs`, labels it with one deliberate mislabel, corrects it, formats,
+downloads each offered file and checks that each is a valid Word file and that the manuscript carries
+the expected comments (5), reloads and confirms no labelling call is made and the correction is back,
+and chooses another file, which is labelled from the start after a question. All its steps pass, with
+no page or console error.
+
+### One real run through the page
+
+`npm run dev` with the key, installed Chrome driven by Playwright as the smoke test does, no mocks,
+all six steps on this case: the editor's note and the author guide as guidelines (edited collection),
+`source.docx` as the manuscript, no label corrected. Downloads, the rule sheet, the roles the page
+kept and two screenshots went to the case's private `work/page-run/` folder.
+
+| Step | What happened | Time |
+|---|---|---|
+| 2 to 3 | Two guideline files read in the page; 18 rules calls (3 parts, 3 groups, two readings), none failed; 151 rules, 11 left out, no conflict; 10 settings filled (no title split) | 44 s |
+| 4 | 79,519 words in 1,460 paragraphs, read in the page | 0.2 s |
+| 5 | The plan said 85 passages; 85 roles calls, none failed, none left unlabelled; the review showed 535 paragraphs to check in 13 chapter groups | 280 s |
+| 6 | Formatted in the page; no running-title request, because this sheet had no running-title rule; 5 downloads: the formatted manuscript, the To-dos list, abstracts and keywords, the alt-text template and the checklist; summary: 22 comments, 24 To-do items, 63 requirements to supply | 1.0 s |
+
+Every download passed the structural validator. The formatted file has 22 comments, 31 tracked
+changes (rejecting them all gives back the source's words exactly), 13 sections each restarting note
+numbers, and every note reference (390), link (125), table (4), content control (86) and bookmark (31)
+of the source; the word check finds no undeclared change. The only console error was the browser
+asking the local server for `/favicon.ico`, which local test mode does not serve.
+
+The page's labels against the hand-set roles: dev 98.2% (structural 251/260, body as structural 1),
+holdout 98.5% (217/224, 4), as in round 1 (98.0% and 99.0%). `npm run format-eval -- --roles
+work/page-run/roles.json --sheet work/page-run/rule-sheet.json --score "work/page-run/source
+(formatted).docx"` first confirmed that the page's file has the same 1,443 paragraphs, text and styles
+as the script's own formatting with those roles and that sheet, then measured it:
+
+| Run | Roles, sheet | Dev matched (near) | Dev style agrees | Dev title block | Holdout matched (near) | Holdout style agrees | Holdout title block |
+|---|---|---|---|---|---|---|---|
+| Round 2, 4p | predicted, hand | 629 (11) | 98.1% | 20/20 | 724 (4) | 99.0% | 26/26 |
+| Round 2, 4e | gold, extracted | 622 (3) | 100.0% | 20/20 | 724 (4) | 98.9% | 26/26 |
+| Round 4, page | predicted, extracted (both made by the page) | 613 (5) of 644 | 97.9% | 10/11 | 720 (4) of 739 | 99.3% | 22/22 |
+
+Round 3's runs (gold roles, hand sheet) gave 35 comments and 45 tracked changes; the page's run, with
+its own roles and its own sheet, gives 22 and 31, because this sheet had no title split (so no split
+titles, and the dev title block falls to 10 of 11) and the markers took the author guide's form.
+Paid: the reading of the guidelines and the labelling of the whole book, about $0.33 by the Gateway's
+estimate.
+
+### What remains
+
+- From earlier rounds: comments that need reading the prose (round 3's reading class, 12 of 39);
+  front matter (contents, contributor notes, part titles) has no role, so its 4 structure comments
+  and the contents comparison are out of reach; chapter-label lines above titles (12 in this job);
+  tables rebuilt from tab-separated lines.
+- Slot filling is steadier but not stable: 11 settings every time against 5, while the title split,
+  the abstract length, the keyword count and the running-title length still drop out of some
+  readings, as the end-to-end run showed. The two figure settings are now a conflict every time on
+  these guidelines, which is truthful but leaves numbering and markers unapplied until the author
+  chooses.
+- Reading each part twice doubles the calls to the Gateway and so meets its rate limit more often:
+  in the ten measured runs with two readings, four parts failed because both their readings were
+  refused (none in the generality run or the end-to-end run).
+- The page's review was exercised with a mocked model and on this book with no corrections; no
+  scholar has used it yet. A Word table and a list typed by hand are still labelled as round 1 found.
+- The spec deletes the browser's copy when the finished file is downloaded; the page keeps it until
+  Start over or 24 hours, as this round's brief asked.
+
+### What round 5 should do
+
+- Make the settings that still drop out reliable by a focused question rather than more readings:
+  after the reading, one short call per setting the sheet lacks, asking whether the guidelines say it
+  and, if so, for the quotation (the quotation check keeps it safe). Measure on five runs and on the
+  18 cases.
+- Use the page with a scholar on a real manuscript and change the review where it is slow: the
+  default list of 535 paragraphs to check is long for this book.
+- Front matter roles and the contents comparison; chapter labels; tables from tabbed lines.
+- A model check per chapter for the reading-class comments.
+- A second manuscript, ideally one whose source uses styles.
+
+Spent in this round: $1.50 by the Gateway's estimate ($5.74 of the allowance left): the stability
+measurements ($0.144, $0.147, $0.257 and $0.287 at catalog prices), two generality runs over the 18
+cases ($0.57 and $0.63), small checks on two journals ($0.065) and the end-to-end run. Catalog
+prices take no account of the discount on cached input, so they add up to more than the Gateway
+billed.
