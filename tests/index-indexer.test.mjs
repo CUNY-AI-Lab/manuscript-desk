@@ -1,6 +1,7 @@
 // Copied from book-index (https://github.com/smorello87/book-index, commit 2d0e6e4),
 // Copyright (C) 2026 Stefano Morello, licensed under the GNU General Public License v3.0, which may be
-// combined into this AGPL-3.0 work (see README.md, Licence). Only this header, the import paths and the fixture names were changed.
+// combined into this AGPL-3.0 work (see README.md, Licence). Only this header, the import paths, the fixture names and the silencing of MuPDF's message on the
+// invalid file were changed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -116,7 +117,12 @@ test('end to end: fixture PDF through MuPDF', () => {
 test('extractPdf reports password-protected and invalid files by name', () => {
   const locked = new Uint8Array(readFileSync(new URL('./fixtures/index-locked.pdf', import.meta.url)));
   assert.throws(() => extractPdf(mupdf, locked), { name: 'PasswordException' });
-  assert.throws(() => extractPdf(mupdf, new TextEncoder().encode('not a pdf at all')), { name: 'InvalidPDFException' });
+  // MuPDF writes its own complaint about the invalid file to stderr; it is kept off the test output.
+  const write = process.stderr.write;
+  process.stderr.write = () => true;
+  try {
+    assert.throws(() => extractPdf(mupdf, new TextEncoder().encode('not a pdf at all')), { name: 'InvalidPDFException' });
+  } finally { process.stderr.write = write; }
 });
 
 test('a typed "book page 1" of 1 overrides the PDF labels', () => {
