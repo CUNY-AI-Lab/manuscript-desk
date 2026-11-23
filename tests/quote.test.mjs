@@ -66,12 +66,14 @@ test('finds a later occurrence of the first segment when the earliest is too far
 test('normalizeForMatch handles soft hyphens, line-break hyphens, quotes, primes, dashes and space', () => {
   assert.equal(normalizeForMatch('foot\u00ADnotes'), 'footnotes');
   assert.equal(normalizeForMatch('foot-  \n  notes'), 'footnotes');
-  assert.equal(normalizeForMatch('Anglo-\nSaxon'), 'anglo- saxon');
+  assert.equal(normalizeForMatch('Anglo-\nSaxon'), 'anglosaxon');
   assert.equal(normalizeForMatch('foot\u2010\nnotes'), 'footnotes');
   assert.equal(normalizeForMatch('foot\u2011 \n notes'), 'footnotes');
-  assert.equal(normalizeForMatch('Anglo\u2010\nSaxon'), 'anglo- saxon');
+  assert.equal(normalizeForMatch('Anglo\u2010\nSaxon'), 'anglosaxon');
+  assert.equal(normalizeForMatch('Anglo-Saxon'), 'anglosaxon');
   assert.equal(normalizeForMatch('‘a’ “b” 5′ 6″'), '\'a\' "b" 5\' 6\'\'');
-  assert.equal(normalizeForMatch('a\u2010b–c—d\u2212e'), 'a-b-c-d-e');
+  assert.equal(normalizeForMatch('a\u2010b–c—d\u2212e'), 'abcde', 'a hyphen or dash between letters goes');
+  assert.equal(normalizeForMatch('pages 10–12 and 3 - 4'), 'pages 10-12 and 3 - 4', 'between figures it stays');
   assert.equal(normalizeForMatch('  One\u00A0\t two\n\nTHREE  '), 'one two three');
   assert.equal(normalizeForMatch('ﬁgure'), 'figure');
 });
@@ -101,4 +103,15 @@ test('skips an occurrence that fails the word boundary for a later whole-word on
 test('rejects a segment without at least 8 letters or digits', () => {
   assert.equal(findQuote('============', 'a ============ b'), false);
   assert.equal(findQuote('Please use double quotation marks ... ============', 'Please use double quotation marks ============ b'), false);
+});
+
+test('a word counts as the same with or without its inner hyphen, as a model retypes a line-break hyphen', () => {
+  const g = 'Every essay carries a short summary and a list of search-\nterms chosen by its author.';
+  assert.equal(findQuote('a list of search- terms chosen by its author', g), true);
+  assert.equal(findQuote('a list of search-terms chosen by its author', g), true);
+  assert.equal(findQuote('a list of searchterms chosen by its author', g), true);
+  assert.equal(findQuote('a list of search terms chosen by its author', g), false, 'a space alone does not join two words');
+  assert.equal(findQuote('the post-war period of the century', 'the postwar period of the century'), true);
+  assert.equal(findQuote('the plates are listed in a sepa-rate index', 'At the back, the plates are listed in a sepa-\n\nrate index of their own.'), true, 'a break across a blank line');
+  assert.equal(findQuote('ranges such as 1990-2000 take a dash', 'ranges such as 1990 2000 take a dash'), false, 'only a hyphen between letters');
 });
