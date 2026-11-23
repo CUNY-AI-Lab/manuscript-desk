@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ROLES, ROLE_IDS, STRUCTURAL, isRole } from '../lib/roles/roles.js';
+import { MATTER, ROLES, ROLE_IDS, STRUCTURAL, isRole } from '../lib/roles/roles.js';
 import { buildPassages, describeParagraph } from '../lib/roles/passages.js';
 import { parseRolesReply, reconcile } from '../lib/roles/reply.js';
 import { labelRoles } from '../lib/roles/label.js';
@@ -15,12 +15,16 @@ const asked = passage => [...passage.matchAll(/^\[(\d+)\]/gm)].map(match => Numb
 const labelLines = passage => asked(passage.split('Label these:')[1].split('\n\n')[0]);
 const answerAll = (passage, role = 'body') => ({ content: JSON.stringify({ roles: Object.fromEntries(labelLines(passage).map(index => [index, role])) }) });
 
-test('fourteen roles, each with a one-line definition; structural roles leave out body and bibliography entries', () => {
-  assert.deepEqual(ROLE_IDS, ['title-block', 'epigraph', 'abstract', 'keywords', 'heading-1', 'heading-2', 'bibliography-heading', 'bibliography-entry', 'block-quotation', 'verse', 'figure', 'list-item', 'table', 'body']);
+test('nineteen roles, each with a one-line definition; structural roles leave out body and bibliography entries', () => {
+  assert.deepEqual(ROLE_IDS, ['title-block', 'epigraph', 'abstract', 'keywords', 'heading-1', 'heading-2', 'bibliography-heading', 'bibliography-entry', 'block-quotation', 'verse', 'figure', 'list-item', 'table', 'body',
+    'title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title']);
   for (const role of ROLES) {
     assert.ok(role.definition.length > 10 && !role.definition.includes('\n'), role.id);
   }
-  assert.equal(STRUCTURAL.size, 12);
+  assert.equal(STRUCTURAL.size, 17);
+  // The front and back matter's roles are structural and belong to no chapter.
+  assert.deepEqual([...MATTER], ['title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title']);
+  assert.ok([...MATTER].every(role => STRUCTURAL.has(role)));
   assert.equal(STRUCTURAL.has('body') || STRUCTURAL.has('bibliography-entry'), false);
   assert.equal(isRole('verse'), true);
   assert.equal(isRole('poem'), false);

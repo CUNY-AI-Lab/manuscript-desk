@@ -4,7 +4,7 @@
 // file or its text) and how it is restored, and what the review shows. manuscript-step.js draws them.
 
 import { buildPassages } from '../../lib/roles/passages.js';
-import { ROLE_IDS, STRUCTURAL, isRole } from '../../lib/roles/roles.js';
+import { MATTER, ROLE_IDS, STRUCTURAL, isRole } from '../../lib/roles/roles.js';
 
 // Each role in plain words, as the review's menus show it.
 export const ROLE_LABELS = Object.freeze({
@@ -22,7 +22,13 @@ export const ROLE_LABELS = Object.freeze({
   'list-item': 'List item',
   table: 'Table',
   body: 'Body text',
+  'title-page': 'Book title page (title, editors or authors)',
+  'front-matter-heading': 'Heading of a front or back matter section (Contents, Abbreviations…)',
+  'contents-entry': 'Line of the contents list',
+  'contributor-note': 'Note on a contributor',
+  'part-title': 'Part title',
 });
+export const MATTER_GROUP = 'Front or back matter';
 export const roleLabel = role => ROLE_LABELS[role] ?? 'Not labelled';
 
 export const EXCERPT_CHARS = 120;
@@ -247,6 +253,10 @@ export function reviewModel(paragraphs, labels, filter = 'check') {
     if (role === 'title-block' && previous !== 'title-block') {
       if (chapter.total) chapters.push(chapter);
       chapter = { key: entry.index, title: excerpt(entry), items: [], total: 0 };
+    } else if (MATTER.has(role) && chapter.key !== -1 && !chapter.matter) {
+      // Front or back matter after a chapter (notes on contributors, say) is a group of its own.
+      if (chapter.total) chapters.push(chapter);
+      chapter = { key: entry.index, title: MATTER_GROUP, items: [], total: 0, matter: true };
     }
     previous = role ?? null;
     chapter.total += 1;
@@ -258,7 +268,7 @@ export function reviewModel(paragraphs, labels, filter = 'check') {
   return {
     counts: [...counts].filter(([, count]) => count > 0).map(([role, count]) => ({ role, label: ROLE_LABELS[role], count })),
     unlabelled,
-    chapters: chapters.filter(entry => entry.items.length > 0),
+    chapters: chapters.filter(entry => entry.items.length > 0).map(({ matter, ...entry }) => entry),
     shown,
     total: withText.length,
   };

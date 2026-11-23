@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkGold, scoreRoles, selectChapters, spansFor } from '../scripts/roles-eval.mjs';
+import { checkGold, scoreRoles, selectChapters, selectMatter, spansFor } from '../scripts/roles-eval.mjs';
 
 // A gold file written for these tests: two chapters of an invented manuscript.
 const GOLD = {
@@ -50,4 +50,21 @@ test('scoreRoles counts accuracy, structural accuracy, body given a structural r
   assert.equal(two.emptySkipped, 1);
   assert.equal(two.correct, 2);
   assert.deepEqual([...two.confusions].sort(), [['bibliography-heading->(none)', 1], ['title-block->body', 1]]);
+});
+
+test('front and back matter spans are checked, measured with dev and all, and scored by role', () => {
+  const withMatter = { ...GOLD, gold: { ...GOLD.gold, 0: 'title-page', 1: 'contents-entry', 2: 'contents-entry', 3: 'contributor-note' }, matter: [{ key: 'front', first: 0, last: 3 }] };
+  assert.deepEqual(checkGold(withMatter), []);
+  assert.match(checkGold({ ...withMatter, matter: [{ key: 'front', first: 3, last: 0 }] })[0], /matter/);
+  assert.deepEqual(selectMatter(withMatter, 'dev').map(span => span.key), ['front']);
+  assert.deepEqual(selectMatter(withMatter, 'all').map(span => span.key), ['front']);
+  assert.deepEqual(selectMatter(withMatter, 'holdout'), []);
+  assert.deepEqual(selectMatter(GOLD, 'dev'), []);
+  const paragraphs = Array.from({ length: 17 }, (_, index) => paragraph(index));
+  const predicted = { 0: 'title-page', 1: 'contents-entry', 2: 'list-item', 3: 'contributor-note' };
+  const all = scoreRoles({ gold: withMatter.gold, predicted, paragraphs, chapters: withMatter.matter });
+  assert.equal(all.scored, 4);
+  assert.equal(all.correct, 3);
+  const entries = scoreRoles({ gold: withMatter.gold, predicted, paragraphs, chapters: withMatter.matter, only: role => role === 'contents-entry' });
+  assert.deepEqual([entries.scored, entries.correct], [2, 1]);
 });

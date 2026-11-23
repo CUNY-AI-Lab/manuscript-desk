@@ -52,6 +52,27 @@ test('chapters begin at a title block and end at the last paragraph with a role'
   assert.equal(plan.decisions.get(3).style, 'body-first');
 });
 
+test('front and back matter belong to no chapter: a chapter ends before them, and they get styles of their own', () => {
+  const paragraphs = model([
+    ['A Book of Invented Lanterns'], ['Edited by'], ['Ada Placeholder'], ['University of Elsewhere'], [''],
+    ['Contents'], [''], ['Paper Lanterns 3'], ['Ben Example'], [''],
+    ['Paper Lanterns'], ['Ben Example'], ['Text.'], ['Works Cited'], ['Entry.'], [''],
+    ['Notes on Contributors'], ['Ben Example teaches lantern studies.'], ['Abbreviations'], ['PL  Paper Lanterns'], [''],
+    ['Part II: Glass'], ['Glass Bells'], ['Cy Sample'], ['Text.'],
+  ]);
+  const roles = { 0: 'title-page', 1: 'title-page', 2: 'title-page', 3: 'title-page', 5: 'front-matter-heading', 7: 'contents-entry', 8: 'contents-entry',
+    10: 'title-block', 11: 'title-block', 12: 'body', 13: 'bibliography-heading', 14: 'bibliography-entry', 16: 'front-matter-heading', 17: 'contributor-note',
+    18: 'front-matter-heading', 19: 'list-item', 21: 'part-title', 22: 'title-block', 23: 'title-block', 24: 'body' };
+  const plan = planFormatting(paragraphs, roles);
+  assert.deepEqual(plan.chapters.map(({ first, last }) => ({ first, last })), [{ first: 10, last: 14 }, { first: 22, last: 24 }], 'the notes, the list after them and the part title are in no chapter');
+  const style = index => plan.decisions.get(index).style;
+  assert.deepEqual([0, 1, 2, 3].map(style), ['book-title', 'book-subtitle', 'book-author', 'book-affiliation']);
+  assert.deepEqual([5, 7, 8, 16, 17, 18, 19, 21].map(style), ['front-matter-heading', 'contents-entry', 'contents-entry', 'front-matter-heading', 'contributor-note', 'front-matter-heading', 'list-item', 'part-title']);
+  assert.equal(style(12), 'body-first');
+  // Spacers go from the start of the front matter to the end of the last chapter.
+  assert.deepEqual([...plan.removed], [4, 6, 9, 15, 20]);
+});
+
 test('a bibliography heading after another is a subheading; an epigraph\'s short last line is its source', () => {
   const paragraphs = model([['Title'], ['A long epigraph that a chapter opens with, quoted from somewhere else entirely.'], ['— Someone'], ['Text.'], ['Works Cited'], ['Primary'], ['Entry.'], ['Secondary'], ['Entry.']]);
   const roles = { 0: 'title-block', 1: 'epigraph', 2: 'epigraph', 3: 'body', 4: 'bibliography-heading', 5: 'bibliography-heading', 6: 'bibliography-entry', 7: 'bibliography-heading', 8: 'bibliography-entry' };

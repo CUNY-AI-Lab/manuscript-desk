@@ -39,6 +39,7 @@ const SETTINGS = {
   'running-title.length': { max: ['Most characters in a running title'] },
   'abstract.words': { max: ['Most words in the abstract'] },
   'keywords.count': { min: ['Fewest keywords'], max: ['Most keywords'] },
+  'contributors.words': { max: ['About how many words in a note on a contributor'] },
   'anonymize': { required: ['Remove the authors’ names for anonymous review'] },
 };
 

@@ -6,7 +6,7 @@
 // the tool produced (same kind, same chapter, anchored on the same paragraph or within two
 // paragraphs of it), the misses by kind, and the findings that match no comment, by kind.
 //
-//   npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles] [--reading dev|holdout|all]
+//   npm run todos-eval -- [--case <folder>] [--predicted | --roles <file>] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles] [--reading dev|holdout|all]
 //
 // A case is a folder under manuscripts/ in MANUSCRIPT_DESK_GUIDELINES (default
 // ../manuscript-desk-guidelines) with source.docx, gold-roles.json and work/comments-key.json (and
@@ -32,7 +32,7 @@ import { readPackage } from '../lib/docx/write.js';
 import { formatDocx } from '../lib/format/format.js';
 import { compareWords, documentWords } from '../lib/format/words.js';
 import { runChecks } from '../lib/checks/run.js';
-import { readChapters, readingFindings, readingUnits } from '../lib/checks/reading.js';
+import { readChapters, readingFindings, readingUnits, withoutRepeats } from '../lib/checks/reading.js';
 import { companionDocuments } from '../lib/todos/companions.js';
 import { proposeRunningTitles } from '../lib/todos/running.js';
 import { fullTitle } from '../lib/todos/shared.js';
@@ -49,18 +49,19 @@ export const CLASSES = ['structure', 'reading', 'human'];
 // How far a finding may sit from the comment's paragraph, in paragraphs with text.
 export const NEAR = 2;
 
-const USAGE = `Usage: npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles]
+const USAGE = `Usage: npm run todos-eval -- [--case <folder>] [--predicted | --roles <file>] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles] [--reading dev|holdout|all]
 
 Runs the formatter and the To-do checks on manuscripts/<case>/source.docx in MANUSCRIPT_DESK_GUIDELINES
 (default ../manuscript-desk-guidelines) and compares the findings with the comments of the hand-formatted
 file, keyed in work/comments-key.json.
   --predicted   roles from the labelling stage (work/predicted-roles.json) instead of gold-roles.json
+  --roles       roles from this file (as roles-eval --save or the Formatter page keeps them)
   --sheet       hand (work/hand-sheet.json, the default), extracted (work/extracted-sheet.json) or a sheet file
   --chapters    the comments to report: dev (the default: the dev chapters and the front matter), holdout or all
   --key         the answer key (default work/comments-key.json)
   --running-titles  propose running titles with a model (cached in work/running-titles.json; a call,
                     made only when the cache is missing, uses the key in CAIL_API_KEY, which pays for it)
-  --reading     run the reading check on the dev, holdout or all chapters (answers cached in
+  --reading     run the reading check on the dev (with the front matter), holdout or all chapters (answers cached in
                 work/reading-answers.json; calls, made only when the cache is missing, use CAIL_API_KEY)
 Otherwise no model call is made; a missing cache is an error.`;
 
@@ -224,7 +225,7 @@ async function reading({ work, units, environment, err }) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, 'running-titles': { type: 'boolean' }, reading: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, roles: { type: 'string' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, 'running-titles': { type: 'boolean' }, reading: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -246,11 +247,12 @@ async function main(argv, environment, { out = console.log, err = console.error 
   if (!read.ok) { err(`The reader could not open source.docx (${read.code}).`); return 1; }
   let roles = gold.gold;
   let rolesNote = 'gold roles';
-  if (values.predicted) {
-    const predicted = await readJson(path.join(work, 'predicted-roles.json'));
-    if (!predicted?.roles) { err('work/predicted-roles.json is missing: run npm run format-eval -- --predicted first.'); return 1; }
+  if (values.predicted && values.roles) { err('Give --predicted or --roles, not both.'); return 1; }
+  if (values.predicted || values.roles) {
+    const predicted = await readJson(values.roles ? path.resolve(values.roles) : path.join(work, 'predicted-roles.json'));
+    if (!predicted?.roles) { err(values.roles ? 'The roles file is missing or has no roles.' : 'work/predicted-roles.json is missing: run npm run format-eval -- --predicted first.'); return 1; }
     roles = predicted.roles;
-    rolesNote = `predicted roles (${predicted.model})`;
+    rolesNote = `${values.roles ? 'roles from a file' : 'predicted roles'} (${predicted.model ?? 'model not named'})`;
   }
   const sheetChoice = values.sheet ?? 'hand';
   const sheetFile = sheetChoice === 'hand' ? path.join(work, 'hand-sheet.json') : sheetChoice === 'extracted' ? path.join(work, 'extracted-sheet.json') : path.resolve(sheetChoice);
@@ -271,8 +273,11 @@ async function main(argv, environment, { out = console.log, err = console.error 
   if (values.reading !== undefined) {
     if (!['dev', 'holdout', 'all'].includes(values.reading)) { err('--reading is dev, holdout or all.'); return 1; }
     const units = readingUnits({ paragraphs: read.paragraphs, roles, chapters: report.chapters, sheet })
-      .filter(unit => values.reading === 'all' || splitOf(chapterKey(unit.first)) === values.reading);
+      .filter(unit => values.reading === 'all' || splitOf(chapterKey(unit.first)) === values.reading || (values.reading === 'dev' && splitOf(chapterKey(unit.first)) === 'front'));
     readingRun = { ...(await reading({ work, units, environment, err })), units: units.length };
+    readingRun.repeats = readingRun.findings.length;
+    readingRun.findings = withoutRepeats(readingRun.findings, findings);
+    readingRun.repeats -= readingRun.findings.length;
     findings.push(...readingFindings(readingRun.findings));
     findings.sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
   }
@@ -284,7 +289,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const todosValidity = validateDocx(todos.bytes);
   const running = values['running-titles'] ? await runningTitles({ work, sheet, report, paragraphs: read.paragraphs, environment, err }) : null;
   const companions = companionDocuments({ sheet, report, paragraphs: read.paragraphs, roles, findings, checks, proposals: running?.proposals ?? new Map() });
-  const tag = `${values.predicted ? 'predicted' : 'gold'}-${sheetChoice === 'hand' || sheetChoice === 'extracted' ? sheetChoice : 'sheet'}`;
+  const tag = `${values.predicted ? 'predicted' : values.roles ? 'roles' : 'gold'}-${sheetChoice === 'hand' || sheetChoice === 'extracted' ? sheetChoice : 'sheet'}`;
   await writeFile(path.join(work, `todos-output-${tag}.docx`), commented.bytes);
   await writeFile(path.join(work, `todos-list-${tag}.docx`), todos.bytes);
   for (const companion of companions) await writeFile(path.join(work, `todos-companion-${companion.name.replace(/[^A-Za-z]+/gu, '-').replace(/-+$/u, '').toLowerCase()}-${tag}.docx`), companion.bytes);
@@ -340,7 +345,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
     const byKind = new Map();
     for (const finding of kept) bump(byKind, finding.kind);
     const cost = readingRun.calls ? `, cost ${readingRun.cost === null ? 'unknown' : `$${readingRun.cost.toFixed(4)}`}` : '';
-    out(`Reading check: ${readingRun.units} chapters (${readingRun.calls} calls made, ${readingRun.cached} answers from the cache${cost}); ${readingRun.failures.length} failed${readingRun.failures.length ? ` (${tally(new Map(readingRun.failures.map(failure => [failure.code, readingRun.failures.filter(other => other.code === failure.code).length])))})` : ""}; ${kept.length} findings kept, ${readingRun.dropped} dropped as unverified; by place: ${tally(bySplit)}; by kind: ${tally(byKind)}. Their quotations are in work/reading-findings-${tag}.json (private).`);
+    out(`Reading check: ${readingRun.units} chapters (${readingRun.calls} calls made, ${readingRun.cached} answers from the cache${cost}); ${readingRun.failures.length} failed${readingRun.failures.length ? ` (${tally(new Map(readingRun.failures.map(failure => [failure.code, readingRun.failures.filter(other => other.code === failure.code).length])))})` : ""}; ${kept.length} findings kept, ${readingRun.dropped} dropped as unverified, ${readingRun.repeats} left out as the same as a check's finding; by place: ${tally(bySplit)}; by kind: ${tally(byKind)}. Their quotations are in work/reading-findings-${tag}.json (private).`);
   }
 
   // Companion documents.

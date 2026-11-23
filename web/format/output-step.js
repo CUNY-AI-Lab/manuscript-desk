@@ -111,7 +111,7 @@ export function createOutputStep(ctx) {
     const calls = ready ? readingPlan({ paragraphs: job.file?.paragraphs, roles: ctx.roles(), sheet: state.sheet }) : 0;
     $('reading-check').disabled = !ready || calls === 0 || job.formatting;
     $('reading-plan').textContent = ready
-      ? `Optional, ${calls === 1 ? 'one model call' : `${calls.toLocaleString('en-US')} model calls`}, one per chapter: the title block, abstract, keywords, headings and the first pages of each chapter's text are sent to the model, which proposes queries an editor would make (the same thing named two ways, an affiliation that differs, missing spaces, typing slips). Only queries whose quoted words are found in the text are kept; they become comments and To-dos, never changes.`
+      ? `Optional, ${calls === 1 ? 'one model call' : `${calls.toLocaleString('en-US')} model calls`}, one per chapter and one for the front matter when it has a title page, a contents list or notes on contributors: the title block, abstract, keywords, headings and the first pages of each chapter's text, with the notes on its authors, and the front matter are sent to the model, which proposes queries an editor would make (the same thing named two ways, an affiliation that differs, missing spaces, typing slips). Only queries whose quoted words are found in the text are kept; they become comments and To-dos, never changes.`
       : '';
     const notices = [];
     if (error) notices.push(el('p', { className: 'notice error', id: 'output-error', role: 'alert', text: error }));

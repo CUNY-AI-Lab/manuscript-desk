@@ -150,6 +150,19 @@ test('the review shows by default what is not body text or a bibliography entry,
   assert.match(DAMAGING, /most damaging mistake/);
 });
 
+test('front or back matter after a chapter is a review group of its own, and every role has words in the menu', () => {
+  // The last four paragraphs with text: a heading and two notes, then a list item that stays with them.
+  const at = paragraphs.filter(entry => entry.text.trim()).slice(-4).map(entry => entry.index);
+  const labels = labelsWith({ ...GOLD, [at[0]]: 'front-matter-heading', [at[1]]: 'contributor-note', [at[2]]: 'contributor-note', [at[3]]: 'list-item' });
+  const model = reviewModel(paragraphs, labels);
+  const group = model.chapters.find(chapter => chapter.title === 'Front or back matter');
+  assert.ok(group, 'a group for the matter');
+  assert.deepEqual(group.items.map(item => item.role), ['front-matter-heading', 'contributor-note', 'contributor-note', 'list-item']);
+  assert.equal(group.key, at[0]);
+  assert.ok(model.chapters.every(chapter => !('matter' in chapter)));
+  for (const role of ROLE_IDS) assert.ok(ROLE_LABELS[role], role);
+});
+
 test('an excerpt is the first 120 characters on one line; neighbours come on demand with their roles', () => {
   const long = { index: 0, text: `${'word '.repeat(40)}end`, hints: { empty: false } };
   assert.equal(Array.from(excerpt(long)).length, 120);

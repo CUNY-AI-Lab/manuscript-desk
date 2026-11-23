@@ -6,7 +6,7 @@ It is for CUNY AI Lab members, behind CUNY Login, at `https://tools.ailab.gc.cun
 
 ## Privacy
 
-Your files are opened in the browser and are not uploaded. To read the guidelines and to label the manuscript's paragraphs, passages of their text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when the rule sheet asks for running titles, the chapter titles are sent the same way; and when the author chooses the reading check in step 6, the title block, abstract, keywords, headings and the first pages of each chapter's text are sent the same way. The manuscript is formatted in the browser. Nothing is stored on the server. The browser keeps the guidelines' text, the rule sheet, the paragraph labels and the author's corrections to them, but not the manuscript or its text, and clears them on Start over or after 24 hours.
+Your files are opened in the browser and are not uploaded. To read the guidelines and to label the manuscript's paragraphs, passages of their text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when the rule sheet asks for running titles, the chapter titles are sent the same way; and when the author chooses the reading check in step 6, the title block, abstract, keywords, headings and the first pages of each chapter's text, the notes on contributors and the front matter (title page and contents list) are sent the same way. The manuscript is formatted in the browser. Nothing is stored on the server. The browser keeps the guidelines' text, the rule sheet, the paragraph labels and the author's corrections to them, but not the manuscript or its text, and clears them on Start over or after 24 hours.
 
 ## The Formatter page
 

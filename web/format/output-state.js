@@ -11,7 +11,7 @@ import { addComments } from '../../lib/docx/comments.js';
 import { validateDocx } from '../../lib/docx/validate.js';
 import { formatDocx } from '../../lib/format/format.js';
 import { runChecks } from '../../lib/checks/run.js';
-import { readChapters, readingFindings, readingUnits } from '../../lib/checks/reading.js';
+import { readChapters, readingFindings, readingUnits, withoutRepeats } from '../../lib/checks/reading.js';
 import { planFormatting, settingsFrom } from '../../lib/format/plan.js';
 import { ruleWith } from '../../lib/checks/rules.js';
 import { changeLines } from '../../lib/checks/summary.js';
@@ -38,7 +38,8 @@ export const runningTitlesRule = sheet => ruleWith(sheet, { slot: 'running-title
 
 /**
  * How many model calls the reading check would make: one per chapter with text to read, found as
- * the formatter finds chapters. Zero without labels.
+ * the formatter finds chapters, and one for the front and back matter when it has any. Zero
+ * without labels.
  */
 export function readingPlan({ paragraphs, roles, sheet }) {
   if (!Array.isArray(paragraphs) || !roles) return 0;
@@ -79,7 +80,7 @@ export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, prop
     try {
       const result = await readChapters({ units, model: null, call: readText, onProgress: onReading });
       reading = { chapters: units.length, failed: result.failures.length, found: result.findings.length };
-      findings = [...findings, ...readingFindings(result.findings)].sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
+      findings = [...findings, ...readingFindings(withoutRepeats(result.findings, findings))].sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
     } catch {
       reading = { chapters: units.length, failed: units.length, found: 0 };
     }
