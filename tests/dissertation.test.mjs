@@ -205,3 +205,12 @@ test('a picture marked decorative needs no alt text, and an alt text a program w
   const alt = findings.filter(finding => finding.kind === 'a11y-alt-text').map(finding => finding.severity);
   assert.deepEqual(alt, ['check'], 'the decorative picture is left alone; the file name is to check');
 });
+
+test('a book or dissertation with no chapter labelled is told so, since chapter settings need chapters', () => {
+  const { bytes, roles } = dissertation();
+  const flat = Object.fromEntries(Object.entries(roles).map(([index, role]) => [index, role === 'title-block' ? 'heading-1' : role]));
+  const result = formatDocx({ bytes, roles: flat, sheet: preset(), date: DATE });
+  const { findings } = runChecks({ paragraphs: readDocx(bytes).paragraphs, roles: flat, report: result.report, sheet: preset() });
+  assert.equal(findings.filter(finding => finding.kind === 'no-chapters').length, 1);
+  assert.equal(run().findings.some(finding => finding.kind === 'no-chapters'), false);
+});
