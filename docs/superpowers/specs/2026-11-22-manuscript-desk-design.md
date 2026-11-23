@@ -293,8 +293,7 @@ A JavaScript module in the browser writes the findings into the document:
   Word shows tracked layout changes poorly; each one is listed in the summary
   (my call).
 
-Stefano's Python `tracked.py`
-(`the JITP copyediting skill's `tracked.py``) is the reference for
+Stefano's Python `tracked.py`, from his JITP copyediting skill, is the reference for
 how these revisions are built; the module is a JavaScript port of the same
 approach, extended to footnotes and endnotes.
 
