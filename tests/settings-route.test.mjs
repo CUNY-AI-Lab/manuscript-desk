@@ -83,6 +83,15 @@ test('POST /api/settings sends the sentences no reading quoted before the text, 
   assert.doesNotMatch(settingsPrompt({ docType: 'article', slots: ['abstract.words'] }), /verdict/);
 });
 
+test('a list item asked about is shown with the lead-in that introduces its list', () => {
+  const text = 'Each chapter you send should include:\n\n• Chapter abstract\n• Figure captions and credits\n\nAuthors must sign the form.';
+  const message = settingsPayload({ model: 'glm-5.3', docType: 'article', slots: [], text, unreported: ['• Chapter abstract', 'Authors must sign the form.'] }).messages[1].content;
+  assert.match(message, /^Sentences from which the first reading reported no requirement:\n\[1\] • Chapter abstract\n    \(an item of the list introduced by: Each chapter you send should include:\)\n\[2\] Authors must sign the form\.\n\nThe guidelines:\n/);
+  const prompt = settingsPrompt({ docType: 'article', slots: [], unreported: true });
+  assert.match(prompt, /item of a list is read with the sentence that introduces the list/);
+  assert.match(prompt, /left to the author's choice/, 'a suggestion the author may take or leave asks nothing');
+});
+
 test('POST /api/settings refuses sentences that are not a short list of short texts', async () => {
   const sent = [];
   const handle = createHandler({ gatewayFetch: gateway({ sent }) });

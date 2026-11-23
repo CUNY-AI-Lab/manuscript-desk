@@ -489,6 +489,19 @@ test('a part whose readings left out many of its requirement sentences is asked 
   assert.equal(sheet.rules.length, 3, 'a rule in "rules", a second verdict and a verdict on no listed sentence add nothing');
 });
 
+test('the short items of a list under a lead-in that asks are asked about, and an item that asks becomes a rule quoting the item', async () => {
+  const listed = 'Authors must send the manuscript as one Word file.\n\nEach chapter you send should include:\n\n•\nChapter abstract\n•\nFigure captions and credits\n•\nA list of permissions held';
+  const settings = fakeSettings(request => (request.unreported ? verdicts([], [
+    { n: 2, asks: true, category: 'abstract-keywords', statement: 'Include an abstract with each chapter.', mode: 'supply' },
+  ]) : reply([])));
+  const { sheet, asked } = await extractRuleSheet({ docType: 'edited-collection', model: 'glm-5.3', guidelines: [listed], callRules: firstOnly().callRules, callSettings: settings.callSettings });
+  const question = settings.calls.find(call => call.unreported);
+  assert.deepEqual(question.unreported, ['Each chapter you send should include:', '• Chapter abstract', '• Figure captions and credits', '• A list of permissions held']);
+  assert.equal(asked.recovered, 1);
+  const abstract = sheet.rules.find(rule => rule.statement === 'Include an abstract with each chapter.');
+  assert.equal(abstract.source.quote, 'Chapter abstract', 'the item itself, without its bullet');
+});
+
 test('a failed sentences question is a failure of its own group, and a second try asks the same sentences again', async () => {
   const failing = fakeSettings(request => { if (request.unreported) throw coded('upstream_timeout', false); return reply([]); });
   const first = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G2], callRules: firstOnly().callRules, callSettings: failing.callSettings });
