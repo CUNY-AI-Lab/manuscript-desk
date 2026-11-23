@@ -40,7 +40,8 @@ import { headingOf, lineOf, newEntry, matcherInput } from '../lib/index/termlist
 import { applyExclusions, findMatter } from '../lib/index/matter.js';
 import { judgePlan, runJudge } from '../lib/index/judge.js';
 import { compatible, countAndDrop, leftOutParagraphs, mergeProposals, nameParts, proposeTerms } from '../lib/index/terms.js';
-import { judgePayload, rangesPayload, termsPayload } from '../server/index-prompts.js';
+import { FILTER_CURVE, describeFilter, passesFilter } from '../lib/index/rank.js';
+import { JUDGE_THINKING, judgePayload, rangesPayload, termsPayload } from '../server/index-prompts.js';
 import { modelControls } from '../server/model.js';
 import { costOf, createGatewayCall, readCatalog, table } from './generality.mjs';
 
@@ -51,7 +52,7 @@ const STEPS = ['match', 'ranges', 'judge', 'subentries', 'terms'];
 const KINDS = ['person', 'place', 'organization', 'work', 'event', 'concept'];
 
 const USAGE = `Usage: npm run index-eval -- --book <folder> [--steps ${STEPS.join(',')}] [--model <id>] [--book-index <path>]
-  [--max-judge-hits <n>] [--max-sub-entries <n>]
+  [--max-judge-hits <n>] [--max-sub-entries <n>] [--judge-runs <n>] [--judge-thinking on|off] [--sub-thinking on|off]
 
 Reads index-books/<folder> in MANUSCRIPT_DESK_GUIDELINES (default ../manuscript-desk-guidelines).
 Model calls (all steps but match, and match's first run, which sorts the gold's headings into
@@ -86,19 +87,25 @@ export function goldLine(heading, kind) {
 
 // --- Model calls with a cache ---
 
-function createCalls({ key, rows, usage, work }) {
+function createCalls({ key, rows, usage, work, judgeThinking = null, subThinking = null }) {
+  const override = { ambiguous: judgeThinking, subentries: subThinking };
+  const thinkingOf = task => (override[task] ?? JUDGE_THINKING[task]);
   const cacheFile = path.join(work, 'index-answers.json');
   let cache = null;
   let writing = Promise.resolve();
   let fromCache = 0;
   const load = async () => { if (cache) return; try { cache = JSON.parse(await readFile(cacheFile, 'utf8')).answers ?? {}; } catch { cache = {}; } };
-  const make = payloadOf => {
+  const make = (payloadOf, tagOf = () => '') => {
     const gateway = key ? createGatewayCall({ key, rows, usage, payloadOf }) : null;
     return async request => {
       await load();
-      const id = JSON.stringify(payloadOf(request, rows.get(request.model)).messages) + request.model;
+      // The key is the messages and the model, a tag for settings other than the route's own (the
+      // judge with thinking off), and for a repeated run (--judge-runs) its own salt, so it asks again.
+      const id = JSON.stringify(payloadOf(request, rows.get(request.model)).messages) + request.model + tagOf(request) + (request.salt ?? '');
       if (typeof cache[id] === 'string') { fromCache += 1; return { content: cache[id] }; }
-      if (!gateway) throw Object.assign(new Error('Not cached, and CAIL_API_KEY is not set.'), { code: 'no_key' });
+      // Replaying without a key: a call the paid run had to ask again as two halves is found under the
+      // halves' keys, so a miss is answered as running out of room, which makes the run ask the halves.
+      if (!gateway) throw Object.assign(new Error('Not cached, and CAIL_API_KEY is not set.'), { code: 'model_output_limit' });
       const answer = await gateway(request);
       cache[id] = answer.content;
       writing = writing.then(async () => { await mkdir(work, { recursive: true }); await writeFile(cacheFile, JSON.stringify({ answers: cache })); });
@@ -108,7 +115,8 @@ function createCalls({ key, rows, usage, work }) {
   };
   return {
     terms: make(({ model, passage }, row) => termsPayload({ model, passage, row })),
-    judge: make(({ model, task, text }, row) => judgePayload({ model, task, text, row })),
+    judge: make(({ model, task, text }, row) => judgePayload({ model, task, text, row, thinking: thinkingOf(task) }), ({ task }) => (thinkingOf(task) ? '' : '#thinking-off')),
+    judgeRun: salt => { const call = make(({ model, task, text }, row) => judgePayload({ model, task, text, row, thinking: thinkingOf(task) }), ({ task }) => (thinkingOf(task) ? '' : '#thinking-off')); return request => call({ ...request, salt }); },
     ranges: make(({ model, pages }, row) => rangesPayload({ model, pages, row })),
     classify: make(({ model, text }, row) => ({ model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: CLASSIFY_PROMPT }, { role: 'user', content: text }], ...modelControls(row, 4000) })),
     fromCache: () => fromCache,
@@ -211,19 +219,81 @@ const headKey = heading => fold(articleFirst(headingOf(heading))).replace(/,/g, 
 const singular = word => (/ies$/.test(word) && word.length > 4 ? `${word.slice(0, -3)}y` : /(ss|us|is)$/.test(word) ? word : /s$/.test(word) && word.length > 3 ? word.slice(0, -1) : word);
 const loose = key => key.split(' ').map(singular).join(' ');
 
-function matches(proposal, gold) {
+// The scoring's matching of a proposal to an index heading. Loose (round 1): the same name (surname and
+// compatible forenames), or any of the proposal's heading and search forms equal to the heading or its
+// part before a comma. That lets a person's bare surname, given as a search form, match every person of
+// that surname in the index, and the surname alone of an index heading match any proposal with it, which
+// counted wrong pairs as matched and as duplicates. Strict (round 2, reported beside the loose): an index
+// heading that names a person matches only a proposal with the same name, the same full name in the
+// order the text writes it, or the name the index gives in parentheses; a one-word search form of a
+// proposed person never counts.
+const PAREN_NAME = /\((\p{Lu}[^)]*)\)/u;
+export function matches(proposal, gold, { strict = false, goldPerson = false } = {}) {
   const p = nameParts(headingOf(proposal.text));
   const g = nameParts(headingOf(gold.heading));
   if (p && g && fold(p.surname) === fold(g.surname) && compatible(p.forenames, g.forenames)) return true;
-  const keys = [headKey(proposal.text), ...(proposal.variants ?? [])].map(loose);
+  const own = proposal.variants ?? [];
+  const variants = strict && proposal.section === 'names' ? own.filter(variant => variant.includes(' ')) : own;
+  const keys = [headKey(proposal.text), ...variants].map(loose);
+  if (strict && goldPerson) {
+    const alias = PAREN_NAME.exec(gold.heading)?.[1];
+    const goldKeys = [headKey(gold.heading), g ? fold(`${g.forenames.join(' ')} ${g.surname}`) : null, alias ? fold(alias) : null].filter(Boolean).map(loose);
+    return keys.some(key => goldKeys.includes(key));
+  }
   const goldKeys = [headKey(gold.heading), headKey(headingOf(gold.heading).split(',')[0])].map(loose);
   return keys.some(key => goldKeys.includes(key));
+}
+
+// The form of an index's heading for a person, for the name-form check: where the index's form is not
+// simply the text's name turned surname first.
+const TITLE_WORD = /^(?:sir|dame|lord|lady|saint|st\.|pope|king|queen|prince|princess|emperor|empress|duke|duchess|count|countess|baron|baroness|marquis|general|gen\.|colonel|col\.|captain|capt\.|admiral|major|lieutenant|lt\.|sergeant|sgt\.|commander|dr\.?|doctor|professor|prof\.|reverend|rev\.|father|brother|sister|mother|president|senator|governor|judge|justice|bishop|archbishop|cardinal|rabbi|imam|sheikh|mr\.?|mrs\.?|ms\.?|miss)$/i;
+const PARTICLE = /^(?:de|d'|d’|du|des|da|di|del|della|dei|van|von|der|den|ter|ten|la|le|el|al|al-|bin|ibn|zu|y)$/i;
+export function nameFormKind(heading) {
+  const plain = headingOf(heading);
+  const parts = nameParts(plain);
+  if (!parts) return 'one name or a name known by';
+  const words = plain.replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.some(word => TITLE_WORD.test(word))) return 'title or rank';
+  const surnameWords = parts.surname.split(/\s+/);
+  if ([...surnameWords, ...parts.forenames].some(word => PARTICLE.test(word)) || /^(?:d[’']|al-)/i.test(parts.surname)) return 'particle';
+  if (surnameWords.length > 1 || /\p{L}-\p{L}/u.test(parts.surname)) return 'compound surname';
+  if (/[“"(]/.test(plain)) return 'nickname or other name';
+  return 'plain';
+}
+
+function scoreTerms(entries, gold, kinds, strict) {
+  const matchedGold = new Set();
+  const goldHits = new Map();
+  const goldOfEntry = new Map();
+  let matchedProposals = 0;
+  for (const entry of entries) {
+    const hits = gold.entries.map((g, at) => (matches(entry, g, { strict, goldPerson: kinds[at] === 'person' }) ? at : -1)).filter(at => at >= 0);
+    goldOfEntry.set(entry.id, hits);
+    if (!hits.length) continue;
+    matchedProposals += 1;
+    for (const at of hits) { matchedGold.add(at); goldHits.set(at, (goldHits.get(at) ?? 0) + 1); }
+  }
+  const duplicates = [...goldHits.values()].reduce((sum, n) => sum + n - 1, 0);
+  return { matchedGold, goldHits, goldOfEntry, matchedProposals, duplicates };
+}
+
+// The trade-off of the term editor's filter: for each threshold, the share of the proposals shown that
+// are index entries against the share of index entries among them.
+function printCurve(out, entries, goldOfEntry, goldCount) {
+  const point = filter => {
+    const shown = entries.filter(entry => passesFilter(entry, filter));
+    const gold = new Set(shown.flatMap(entry => goldOfEntry.get(entry.id)));
+    const hits = shown.filter(entry => goldOfEntry.get(entry.id).length).length;
+    return `${shown.length} shown, ${percent(hits, shown.length)} are index entries, ${percent(gold.size, goldCount)} of the index`;
+  };
+  out('  the filter (strict matching): proposals shown, share that are index entries, share of the index\'s entries proposed:');
+  for (const filter of FILTER_CURVE) out(`    ${describeFilter(filter)}: ${point(filter)}`);
 }
 
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { book: { type: 'string' }, steps: { type: 'string' }, model: { type: 'string' }, 'book-index': { type: 'string' }, 'max-judge-hits': { type: 'string' }, 'max-sub-entries': { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { book: { type: 'string' }, steps: { type: 'string' }, model: { type: 'string' }, 'book-index': { type: 'string' }, 'max-judge-hits': { type: 'string' }, 'max-sub-entries': { type: 'string' }, 'judge-runs': { type: 'string' }, 'judge-thinking': { type: 'string' }, 'sub-thinking': { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) { err(`${error.message}\n\n${USAGE}`); return 1; }
   if (values.help || !values.book) { (values.help ? out : err)(USAGE); return values.help ? 0 : 1; }
   const steps = (values.steps ?? 'match').split(',').map(step => step.trim());
@@ -242,7 +312,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
 
   const rows = (await readCatalog()) ?? new Map();
   const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
-  const calls = createCalls({ key: environment.CAIL_API_KEY?.trim(), rows, usage, work });
+  const calls = createCalls({ key: environment.CAIL_API_KEY?.trim(), rows, usage, work, judgeThinking: values['judge-thinking'] === undefined ? null : values['judge-thinking'] === 'on', subThinking: values['sub-thinking'] === undefined ? null : values['sub-thinking'] === 'on' });
   const started = performance.now();
   const { texts, labels } = extractPdf(mupdf, bytes);
   const { numbers, source } = pageNumbering(texts.length, labels, null);
@@ -301,55 +371,66 @@ async function main(argv, environment, { out = console.log, err = console.error 
   if (steps.includes('judge')) {
     const reasons = detectAmbiguous(entries, base.byEntry);
     const limit = Number(values['max-judge-hits'] ?? 150);
+    const runs = Math.max(1, Number(values['judge-runs'] ?? 1));
     const flagged = entries.filter(entry => reasons.has(entry.id));
     const withContext = findHits(pages, entries, { contextFor: new Set(flagged.map(entry => entry.id)) });
     const chosen = flagged.filter(entry => (withContext.byEntry.get(entry.id)?.hits.length ?? 0) > 0 && withContext.byEntry.get(entry.id).hits.length <= limit);
     const reasonKinds = {};
     for (const entry of flagged) for (const reason of reasons.get(entry.id)) { const kind = reason.replace(/“[^”]*”/g, '“…”').replace(/\d+/g, 'n').replace(/(surname of|searched for|part of) .*/, '$1 …'); reasonKinds[kind] = (reasonKinds[kind] ?? 0) + 1; }
     const plan = judgePlan('ambiguous', chosen, withContext.byEntry, entry => ({ reasons: reasons.get(entry.id) }));
-    out(`\nAmbiguity: ${flagged.length} entries marked ambiguous by the tool (${Object.entries(reasonKinds).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind}: ${n}`).join('; ')}); ${chosen.length} with 1 to ${limit} hits judged: ${plan.hits} hits in ${plan.calls} calls.`);
-    const timer = performance.now();
-    const judged = await runJudge({ task: 'ambiguous', entries: chosen, byEntry: withContext.byEntry, model, callJudge: calls.judge, reasons });
-    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${judged.answers.size} hits decided, ${judged.failures.length} failed calls${judged.failures.length ? ` (${[...new Set(judged.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
-    // Hit-level agreement with the index: a hit on a page the index gives for the entry (text or note) should be kept.
-    const tally = { keepOnGold: 0, dropOnGold: 0, keepOffGold: 0, dropOffGold: 0 };
-    const after = new Map(withContext.byEntry);
-    const samples = [];
-    for (const entry of chosen) {
-      const g = goldOf.get(entry.id);
-      const onGold = new Set([...g.allPages, ...g.allNotePages]);
-      const { hits, pages: found } = withContext.byEntry.get(entry.id);
-      for (const hit of hits) {
-        const answer = judged.answers.get(hit.id);
-        if (!answer) continue;
-        const key = `${answer.keep ? 'keep' : 'drop'}${onGold.has(hit.page) ? 'OnGold' : 'OffGold'}`;
-        tally[key] += 1;
-        samples.push({ entry: entry.text, page: hit.page, onGold: onGold.has(hit.page), keep: answer.keep, reason: answer.reason, context: hit.context });
-      }
-      const dropped = new Set(found.filter(page => hits.filter(hit => hit.page === page).every(hit => judged.answers.get(hit.id)?.keep === false)));
-      after.set(entry.id, { ...withContext.byEntry.get(entry.id), pages: found.filter(page => !dropped.has(page)) });
-    }
-    await writeFile(path.join(work, 'judge-decisions.json'), JSON.stringify(samples, null, 1));
-    // A sample of these hits labelled by hand before the judge ran (work/judge-label-sample.json and
-    // work/judge-labels.json, private): keep, or drop with why.
+    out(`\nAmbiguity: ${flagged.length} entries marked ambiguous by the tool (${Object.entries(reasonKinds).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind}: ${n}`).join('; ')}); ${chosen.length} with 1 to ${limit} hits judged: ${plan.hits} hits in ${plan.calls} calls${runs > 1 ? `, ${runs} runs` : ''}.`);
     const labelled = await Promise.all(['judge-label-sample.json', 'judge-labels.json'].map(name => readFile(path.join(work, name), 'utf8').then(JSON.parse).catch(() => null)));
-    if (labelled[0] && labelled[1]) {
-      const agree = { keepKeep: 0, keepDrop: 0, dropKeep: 0, dropDrop: 0, missing: 0 };
-      const dropKinds = {};
-      labelled[0].forEach((item, at) => {
-        const label = labelled[1].labels[at];
-        const answer = judged.answers.get(item.id);
-        if (!answer) { agree.missing += 1; return; }
-        const want = label === 'keep' ? 'keep' : 'drop';
-        agree[`${want}${answer.keep ? 'Keep' : 'Drop'}`] += 1;
-        if (want === 'drop') dropKinds[`${label.slice(5)} ${answer.keep ? 'kept' : 'dropped'}`] = (dropKinds[`${label.slice(5)} ${answer.keep ? 'kept' : 'dropped'}`] ?? 0) + 1;
-      });
-      out(`  hand-labelled sample of ${labelled[0].length}: agreed ${agree.keepKeep + agree.dropDrop} (keep/keep ${agree.keepKeep}, drop/drop ${agree.dropDrop}); labelled keep but dropped ${agree.keepDrop}; labelled drop but kept ${agree.dropKeep}; not decided ${agree.missing}. Drops by why: ${Object.entries(dropKinds).map(([kind, n]) => `${kind} ${n}`).join(', ')}.`);
+    const allRuns = [];
+    for (let run = 1; run <= runs; run += 1) {
+      const timer = performance.now();
+      let unverified = 0;
+      const judged = await runJudge({ task: 'ambiguous', entries: chosen, byEntry: withContext.byEntry, model, callJudge: run === 1 ? calls.judge : calls.judgeRun(`#run${run}`), reasons, onResult: (_, parsed) => { unverified += parsed.unverified ?? 0; } });
+      out(`  run ${run}: ${((performance.now() - timer) / 1000).toFixed(0)} s, ${judged.answers.size} hits decided, ${unverified} drops left undecided for want of evidence, ${judged.failures.length} failed calls${judged.failures.length ? ` (${[...new Set(judged.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
+      allRuns.push(judged.answers);
+      if (run === 1) await writeFile(path.join(work, 'judge-decisions.json'), JSON.stringify(chosen.flatMap(entry => withContext.byEntry.get(entry.id).hits.filter(hit => judged.answers.has(hit.id)).map(hit => ({ entry: entry.text, page: hit.page, keep: judged.answers.get(hit.id).keep, reason: judged.answers.get(hit.id).reason, evidence: judged.answers.get(hit.id).evidence, context: hit.context }))), null, 1));
     }
-    out(`  decisions against the index's pages: kept on its pages ${tally.keepOnGold}, dropped on its pages ${tally.dropOnGold} (wrong), kept off its pages ${tally.keepOffGold}, dropped off its pages ${tally.dropOffGold}.`);
-    const subset = byEntry => chosen.map(entry => ({ gold: goldOf.get(entry.id), pages: byEntry.get(entry.id)?.pages ?? [] }));
-    printScore(out, '  judged entries before', score(subset(withContext.byEntry), { matterPages }));
-    printScore(out, '  judged entries after the decisions', score(subset(after), { matterPages }));
+    // A hit no run decided is kept, as the page keeps it.
+    const keepOf = (answers, id) => answers.get(id)?.keep !== false;
+    const reportDecisions = (label, keepFor) => {
+      const tally = { keepOnGold: 0, dropOnGold: 0, keepOffGold: 0, dropOffGold: 0 };
+      const after = new Map(withContext.byEntry);
+      for (const entry of chosen) {
+        const g = goldOf.get(entry.id);
+        const onGold = new Set([...g.allPages, ...g.allNotePages]);
+        const { hits, pages: found } = withContext.byEntry.get(entry.id);
+        for (const hit of hits) tally[`${keepFor(hit.id) ? 'keep' : 'drop'}${onGold.has(hit.page) ? 'OnGold' : 'OffGold'}`] += 1;
+        const dropped = new Set(found.filter(page => hits.filter(hit => hit.page === page).every(hit => !keepFor(hit.id))));
+        after.set(entry.id, { ...withContext.byEntry.get(entry.id), pages: found.filter(page => !dropped.has(page)) });
+      }
+      out(`  ${label}:`);
+      if (labelled[0] && labelled[1]) {
+        const agree = { keepKeep: 0, keepDrop: 0, dropKeep: 0, dropDrop: 0 };
+        labelled[0].forEach((item, at) => { const want = labelled[1].labels[at] === 'keep' ? 'keep' : 'drop'; agree[`${want}${keepFor(item.id) ? 'Keep' : 'Drop'}`] += 1; });
+        out(`    hand-labelled sample of ${labelled[0].length}: agreed ${agree.keepKeep + agree.dropDrop} (keep/keep ${agree.keepKeep}, drop/drop ${agree.dropDrop}); labelled keep but dropped ${agree.keepDrop}; labelled drop but kept ${agree.dropKeep}.`);
+      }
+      out(`    decisions against the index's pages: kept on its pages ${tally.keepOnGold}, dropped on its pages ${tally.dropOnGold} (wrong), kept off its pages ${tally.keepOffGold}, dropped off its pages ${tally.dropOffGold}.`);
+      const subset = byEntry => chosen.map(entry => ({ gold: goldOf.get(entry.id), pages: byEntry.get(entry.id)?.pages ?? [] }));
+      const before = score(subset(withContext.byEntry), { matterPages });
+      const now = score(subset(after), { matterPages });
+      out(`    judged entries' pages: precision ${percent(before.both, before.toolPages)} -> ${percent(now.both, now.toolPages)}, recall ${percent(before.both, before.goldPages)} -> ${percent(now.both, now.goldPages)}.`);
+    };
+    allRuns.forEach((answers, at) => reportDecisions(`run ${at + 1}`, id => keepOf(answers, id)));
+    // Agreement between runs, over every hit judged: the same decision, and of the hits either run dropped, how many both did.
+    const hitIds = chosen.flatMap(entry => withContext.byEntry.get(entry.id).hits.map(hit => hit.id));
+    const agreement = (keepA, keepB) => {
+      let same = 0, dropA = 0, dropB = 0, dropBoth = 0;
+      for (const id of hitIds) { const a = keepA(id), b = keepB(id); if (a === b) same += 1; if (!a) dropA += 1; if (!b) dropB += 1; if (!a && !b) dropBoth += 1; }
+      const n = hitIds.length, pa = (n - dropA) / n, pb = (n - dropB) / n, chance = pa * pb + (1 - pa) * (1 - pb);
+      const kappa = chance < 1 ? ((same / n) - chance) / (1 - chance) : 1;
+      return `same decision on ${same} of ${n} hits (${percent(same, n)}); drops ${dropA} and ${dropB}, ${dropBoth} in both (${percent(dropBoth, dropA + dropB - dropBoth)} of the hits either dropped); kappa ${kappa.toFixed(2)}`;
+    };
+    for (let a = 0; a < allRuns.length; a += 1) for (let b = a + 1; b < allRuns.length; b += 1) out(`  runs ${a + 1} and ${b + 1}: ${agreement(id => keepOf(allRuns[a], id), id => keepOf(allRuns[b], id))}.`);
+    // Two readings, a drop proposed only when both drop.
+    if (allRuns.length >= 2) {
+      const both = (x, y) => id => keepOf(x, id) || keepOf(y, id);
+      reportDecisions('two readings (runs 1 and 2), a drop only when both drop', both(allRuns[0], allRuns[1]));
+      if (allRuns.length >= 4) out(`  two readings against two readings (runs 1 and 2 against 3 and 4): ${agreement(both(allRuns[0], allRuns[1]), both(allRuns[2], allRuns[3]))}.`);
+    }
   }
 
   if (steps.includes('subentries')) {
@@ -364,7 +445,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
     out(`\nSubentries: ${chosen.length} of the ${withSubs.length} entries with subentries; ${plan.hits} hits in ${plan.calls} calls.`);
     const timer = performance.now();
     const sorted = await runJudge({ task: 'subentries', entries: subEntries, byEntry: found.byEntry, model, callJudge: calls.judge });
-    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${sorted.answers.size} hits sorted, ${sorted.failures.length} failed calls.`);
+    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${sorted.answers.size} hits sorted, ${sorted.failures.length} failed calls${sorted.failures.length ? ` (${[...new Set(sorted.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
     const tally = { right: 0, wrong: 0, offGold: 0, codeRight: 0, codeKnown: 0 };
     chosen.forEach(({ entry }, n) => {
       const made = subEntries[n];
@@ -382,6 +463,29 @@ async function main(argv, environment, { out = console.log, err = console.error 
       }
     });
     out(`  hits on pages the index gives: sorted as the index does ${tally.right} of ${tally.right + tally.wrong} (${percent(tally.right, tally.right + tally.wrong)}); hits on other pages ${tally.offGold}. The subentry's own words on the page (code only) placed ${tally.codeKnown} hits, ${tally.codeRight} as the index does.`);
+    // Pages, as the page composes the index (web/index/state.js indexEntries): a page goes under each
+    // subentry whose words are on it or to which an applied answer sorts a hit on it, else under the
+    // heading. It is filed as the index files it when one of those subentries is one the index gives
+    // the page under, or, under the heading, when the index gives it under the heading.
+    const pageTally = { right: 0, wrong: 0, codeOnlyRight: 0, kinds: {} };
+    chosen.forEach(({ entry }, n) => {
+      const made = subEntries[n];
+      const { hits, subentryPages, pages: entryPages } = found.byEntry.get(made.id);
+      const own = new Set(entry.pages);
+      for (const page of entryPages) {
+        const subs = entry.subentries.map((sub, at) => (sub.pages.includes(page) ? at : -1)).filter(at => at >= 0);
+        if (!subs.length && !own.has(page)) continue;
+        const byCode = subentryPages.map((list, at) => (list.includes(page) ? at : -1)).filter(at => at >= 0);
+        const byModel = hits.filter(hit => hit.page === page).map(hit => sorted.answers.get(hit.id)).filter(Number.isInteger);
+        const placed = new Set([...byCode, ...byModel]);
+        const right = placed.size ? [...placed].some(at => subs.includes(at)) : own.has(page);
+        pageTally[right ? 'right' : 'wrong'] += 1;
+        if ((byCode.length ? byCode.some(at => subs.includes(at)) : own.has(page))) pageTally.codeOnlyRight += 1;
+        if (!right) { const kind = placed.size ? (subs.length ? 'another subentry than the index' : 'a subentry; the index has the heading only') : 'the heading; the index has a subentry only'; pageTally.kinds[kind] = (pageTally.kinds[kind] ?? 0) + 1; }
+      }
+    });
+    const pagesScored = pageTally.right + pageTally.wrong;
+    out(`  pages the index gives, filed as the index files them: ${pageTally.right} of ${pagesScored} (${percent(pageTally.right, pagesScored)}); with the code's rule alone (no model) ${pageTally.codeOnlyRight} (${percent(pageTally.codeOnlyRight, pagesScored)}). Filed otherwise: ${Object.entries(pageTally.kinds).sort((a, b) => b[1] - a[1]).map(([kind, count]) => `${kind} ${count}`).join('; ') || 'none'}.`);
   }
 
   if (steps.includes('terms')) {
@@ -394,45 +498,58 @@ async function main(argv, environment, { out = console.log, err = console.error 
     const proposals = [...run.byPassage.values()].flatMap(answer => answer.proposals);
     const merged = mergeProposals(proposals);
     const { entries: kept, dropped } = countAndDrop(merged, paragraphs, left);
-    out(`\nStage 1 on the book's text: ${paragraphs.length} paragraphs (${left.size} left out by ${by}), ${run.passages.length} passages, ${seconds.toFixed(0)} s, ${run.failures.length} failed calls.`);
+    out(`\nStage 1 on the book's text: ${paragraphs.length} paragraphs (${left.size} left out by ${by}), ${run.passages.length} passages, ${seconds.toFixed(0)} s, ${run.failures.length} failed calls${run.failures.length ? ` (${[...new Set(run.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
     out(`  proposals ${verified + unverified}: quotation verified ${verified} (${percent(verified, verified + unverified)}); merged into ${merged.length} entries; ${dropped.length} dropped as only in left-out paragraphs; ${kept.filter(entry => entry.count === 0).length} kept but not found by their own search forms; ${kept.length} in the list.`);
     const withVariants = kept.map(entry => ({ ...entry, variants: [...entry.text.matchAll(/\(([^)]+)\)/g)].flatMap(match => match[1].split(',')).map(text => fold(text).replace(/,/g, '')) }));
-    const matchedGold = new Set();
-    const goldHits = new Map();
-    let matchedProposals = 0;
-    const nonGold = [];
-    const matchedPairs = [];
-    for (const entry of withVariants) {
-      const hits = gold.entries.map((g, at) => (matches(entry, g) ? at : -1)).filter(at => at >= 0);
-      if (hits.length) { matchedProposals += 1; matchedPairs.push([headingOf(entry.text), gold.entries[hits[0]].heading]); hits.forEach(at => { matchedGold.add(at); goldHits.set(at, (goldHits.get(at) ?? 0) + 1); }); } else nonGold.push(entry);
+    const scored = { loose: scoreTerms(withVariants, gold, kinds, false), strict: scoreTerms(withVariants, gold, kinds, true) };
+    for (const [name, result] of Object.entries(scored)) {
+      out(`  ${name === 'loose' ? 'matching as in round 1' : 'strict matching of people (round 2)'}: gold main entries proposed (recall) ${result.matchedGold.size}/${gold.entries.length} (${percent(result.matchedGold.size, gold.entries.length)}); proposals that are gold entries ${result.matchedProposals}/${withVariants.length} (${percent(result.matchedProposals, withVariants.length)}); gold entries matched by more than one proposal (duplicates left) ${result.duplicates}.`);
+      const byKind = KINDS.map(kind => { const all = kinds.filter(value => value === kind).length; const got = [...result.matchedGold].filter(at => kinds[at] === kind).length; return `${kind} ${got}/${all} (${percent(got, all)})`; });
+      out(`    recall by kind: ${byKind.join(', ')}.`);
     }
-    const duplicates = [...goldHits.values()].reduce((sum, n) => sum + n - 1, 0);
-    out(`  gold main entries proposed (recall): ${matchedGold.size}/${gold.entries.length} (${percent(matchedGold.size, gold.entries.length)}); proposals that are gold entries: ${matchedProposals}/${withVariants.length} (${percent(matchedProposals, withVariants.length)}); gold entries matched by more than one proposal (duplicates left): ${duplicates}.`);
-    const byKind = KINDS.map(kind => { const all = kinds.filter(value => value === kind).length; const got = [...matchedGold].filter(at => kinds[at] === kind).length; return `${kind} ${got}/${all} (${percent(got, all)})`; });
-    out(`  recall by kind: ${byKind.join(', ')}.`);
-    // Name form: a proposed person matched to a gold person with exactly the gold's heading (parenthetical aside).
-    let personPairs = 0, sameForm = 0;
+    const { matchedGold, goldOfEntry } = scored.strict;
+    // The sample for judging by hand is drawn from the proposals the loose matching leaves out, as in round 1.
+    const nonGold = withVariants.filter(entry => !scored.loose.goldOfEntry.get(entry.id).length);
+    const matchedPairs = withVariants.filter(entry => goldOfEntry.get(entry.id).length).map(entry => [headingOf(entry.text), gold.entries[goldOfEntry.get(entry.id)[0]].heading]);
+    // Private, for reading by hand: the features of every proposal, the index's entries not proposed, and those proposed more than once.
+    await writeFile(path.join(work, 'terms-features.json'), JSON.stringify(withVariants.map(entry => ({ text: entry.text, kind: entry.kind, section: entry.section, count: entry.count, spread: entry.spread, paragraphs: entry.paragraphs, inHeading: entry.inHeading, passages: entry.passages, discussed: entry.discussed ?? null, gold: goldOfEntry.get(entry.id) }))));
+    await writeFile(path.join(work, 'terms-misses.json'), JSON.stringify(gold.entries.map((g, at) => ({ heading: g.heading, kind: kinds[at], pages: g.allPages.length, subentries: g.subentries.length })).filter((_, at) => !matchedGold.has(at)), null, 1));
+    await writeFile(path.join(work, 'terms-duplicates.json'), JSON.stringify([...scored.strict.goldHits].filter(([, n]) => n > 1).map(([at]) => ({ gold: gold.entries[at].heading, kind: kinds[at], proposals: withVariants.filter(entry => goldOfEntry.get(entry.id).includes(at)).map(entry => entry.text) })), null, 1));
+    // Name form: a proposed person matched (strictly) to a gold person with exactly the gold's heading,
+    // overall and by the form of the index's heading.
+    const forms = {};
     for (const entry of withVariants.filter(item => item.section === 'names')) {
-      const at = gold.entries.findIndex((g, n) => kinds[n] === 'person' && matches(entry, g));
-      if (at < 0) continue;
-      personPairs += 1;
-      if (fold(headingOf(entry.text)) === fold(headingOf(gold.entries[at].heading))) sameForm += 1;
+      const at = goldOfEntry.get(entry.id).find(n => kinds[n] === 'person');
+      if (at === undefined) continue;
+      const form = nameFormKind(gold.entries[at].heading);
+      forms[form] ??= { of: 0, same: 0 };
+      forms[form].of += 1;
+      if (fold(headingOf(entry.text)) === fold(headingOf(gold.entries[at].heading))) forms[form].same += 1;
     }
-    out(`  name form: ${sameForm} of ${personPairs} matched people (${percent(sameForm, personPairs)}) have exactly the index's surname-first heading.`);
+    const personPairs = Object.values(forms).reduce((sum, form) => sum + form.of, 0);
+    const sameForm = Object.values(forms).reduce((sum, form) => sum + form.same, 0);
+    out(`  name form: ${sameForm} of ${personPairs} matched people (${percent(sameForm, personPairs)}) have exactly the index's surname-first heading; by the index's form: ${Object.entries(forms).sort((x, y) => y[1].of - x[1].of).map(([form, { of, same }]) => `${form} ${same}/${of}`).join(', ')}.`);
+    const orgsAsPeople = withVariants.filter(entry => entry.section === 'names' && goldOfEntry.get(entry.id).some(n => kinds[n] === 'organization')).length;
+    out(`  proposed as people but an organization in the index: ${orgsAsPeople}.`);
+    printCurve(out, withVariants, goldOfEntry, gold.entries.length);
     // A fixed sample of proposals that are not gold entries, for judging by hand (kept private).
     const step = Math.max(1, Math.floor(nonGold.length / 50));
     const sample = nonGold.filter((_, at) => at % step === 0).slice(0, 50).map(entry => ({ heading: headingOf(entry.text), kind: entry.kind, count: entry.count, quote: entry.quotes?.[0] }));
-    await writeFile(path.join(work, 'terms-nongold-sample.json'), JSON.stringify(sample, null, 1));
+    // The labels made by hand belong to one sample (work/terms-nongold-labelled-sample.json); a new sample
+    // is written beside it and its labels are not reused.
+    const labelledSample = await readFile(path.join(work, 'terms-nongold-labelled-sample.json'), 'utf8').catch(() => null);
+    const sameSample = labelledSample !== null && labelledSample === JSON.stringify(sample, null, 1);
+    await writeFile(path.join(work, sameSample || labelledSample === null ? 'terms-nongold-sample.json' : 'terms-nongold-sample-new.json'), JSON.stringify(sample, null, 1));
     await writeFile(path.join(work, 'terms-list.txt'), kept.map(entry => entry.text).join('\n'));
     // A fixed sample of matched pairs, for checking the scoring's matching by hand (kept private).
     const pairStep = Math.max(1, Math.floor(matchedPairs.length / 30));
     await writeFile(path.join(work, 'terms-matched-sample.json'), JSON.stringify(matchedPairs.filter((_, at) => at % pairStep === 0).slice(0, 30), null, 1));
     const labelled = await readFile(path.join(work, 'terms-nongold-labels.json'), 'utf8').then(JSON.parse).catch(() => null);
-    if (Array.isArray(labelled)) out(`  non-gold sample judged by hand: ${labelled.filter(label => label === 'yes').length} of ${labelled.length} are reasonable index terms anyway.`);
-    else out(`  non-gold sample of ${sample.length} written to the case's work folder for judging by hand.`);
+    if (Array.isArray(labelled) && sameSample) out(`  non-gold sample judged by hand: ${labelled.filter(label => label === 'yes').length} of ${labelled.length} are reasonable index terms anyway.`);
+    else out(`  non-gold sample of ${sample.length} written to the case's work folder for judging by hand${labelledSample !== null ? ' (the labels made by hand are for another sample)' : ''}.`);
     const missedKinds = {};
     gold.entries.forEach((_, at) => { if (!matchedGold.has(at)) missedKinds[kinds[at]] = (missedKinds[kinds[at]] ?? 0) + 1; });
-    out(`  missed gold entries by kind: ${Object.entries(missedKinds).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind} ${n}`).join(', ')}.`);
+    out(`  missed gold entries by kind (strict): ${Object.entries(missedKinds).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind} ${n}`).join(', ')}.`);
   }
 
   const cost = costOf(usage, rows.get(model));

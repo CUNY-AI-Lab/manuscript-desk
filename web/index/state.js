@@ -8,11 +8,12 @@ import { headingOf, lineOf, newEntry, parseTermList, serializeTermList, variants
 import { LAYOUTS, SORTINGS } from '../../lib/index/format.js';
 import { RANGE_STYLES } from '../../lib/index/ranges.js';
 import { buildTermPassages } from '../../lib/index/terms.js';
+import { DEFAULT_FILTER, PAGE_CHOICES } from '../../lib/index/rank.js';
 
 export const SAVED_KEY = 'index';
 export const STORE_NAME = 'manuscript-desk-index';
 export const STATUSES = Object.freeze(['proposed', 'accepted', 'dropped']);
-export const DEFAULT_SETTINGS = Object.freeze({ pageOne: '', matchCase: false, layout: 'indented', style: 'chicago', sorting: 'letter-by-letter', collapse: true });
+export const DEFAULT_SETTINGS = Object.freeze({ pageOne: '', matchCase: false, layout: 'indented', style: 'chicago', sorting: 'letter-by-letter', collapse: true, filter: DEFAULT_FILTER });
 const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value);
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
@@ -76,6 +77,8 @@ export function mergeEntries(list, fromId, intoId) {
     seeAlso: [...new Set([...into.seeAlso, ...from.seeAlso])],
     ambiguous: into.ambiguous || from.ambiguous,
     count: (into.count ?? 0) + (from.count ?? 0),
+    ...(Number.isInteger(into.spread) || Number.isInteger(from.spread) ? { spread: Math.max(into.spread ?? 0, from.spread ?? 0) } : {}),
+    ...(into.discussed || from.discussed ? { discussed: (into.discussed ?? 0) + (from.discussed ?? 0) } : {}),
     quotes: [...(into.quotes ?? []), ...(from.quotes ?? [])].slice(0, 3),
   };
   return list.filter(entry => entry.id !== fromId).map(entry => (entry.id === intoId ? merged : entry));
@@ -89,6 +92,29 @@ export function termsPlan(paragraphs, left) {
   const passages = buildTermPassages(paragraphs, { left });
   return { calls: passages.length, text: `${plural(passages.length, 'model call', 'model calls')}, one per passage of about 9,000 characters${left.size ? `; ${plural(left.size, 'paragraph', 'paragraphs')} of bibliography left out` : ''}.` };
 }
+
+export const JUDGE_SCOPES = Object.freeze(['marked', 'flagged', 'both']);
+const MARKED = 'marked by you';
+
+/**
+ * The entries the ambiguity judge can read, by scope: those the author marked, those the tool flags
+ * for another reason, or both; each only when it has hits.
+ * @param {object[]} list the working list
+ * @param {Map<string, string[]>} reasons from detectAmbiguous
+ * @param {Map<string, { hits: object[] }>} byEntry
+ * @returns {{ marked: object[], flagged: object[], both: object[] }}
+ */
+export function judgeScopes(list, reasons, byEntry) {
+  const withHits = list.filter(entry => reasons.has(entry.id) && (byEntry.get(entry.id)?.hits.length ?? 0) > 0);
+  return {
+    marked: withHits.filter(entry => reasons.get(entry.id).includes(MARKED)),
+    flagged: withHits.filter(entry => reasons.get(entry.id).some(reason => reason !== MARKED)),
+    both: withHits,
+  };
+}
+
+/** The scope the judge starts on: the author's marks when there are any, else what the tool flags. */
+export const defaultJudgeScope = scopes => (scopes.marked.length ? 'marked' : 'flagged');
 
 // --- The index the author gets ---
 
@@ -153,7 +179,12 @@ export function settingsFromSheet(text) {
 
 // --- What this browser keeps ---
 
-const savedEntry = ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages }) => ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages });
+const savedEntry = ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading }) => ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading });
+// The numbers and marks a saved entry keeps beside its line, checked on the way back.
+const savedFacts = own => ({
+  ...Object.fromEntries(['count', 'countLeftOut', 'passages', 'spread', 'discussed'].filter(key => Number.isInteger(own[key]) && own[key] >= 0).map(key => [key, own[key]])),
+  ...(own.inHeading === true ? { inHeading: true } : {}),
+});
 
 /**
  * The work kept in this browser: the term list (without the quotations from the manuscript), the
@@ -170,7 +201,7 @@ export function savedState(state) {
       answered: Object.fromEntries(Object.entries(state.proposing.answered).map(([key, answer]) => [key, { unverified: answer.unverified, proposals: answer.proposals.map(({ quote, ...rest }) => rest) }])),
     } : null,
     pdf: state.pdf ? { name: state.pdf.name, hash: state.pdf.hash, pages: state.pdf.pages } : null,
-    settings: { ...state.settings },
+    settings: { ...state.settings, filter: { ...(state.settings.filter ?? DEFAULT_FILTER) } },
     ranges: state.ranges.map(({ kind, first, last, on, cut }) => ({ kind, first, last, on, ...(Number.isInteger(cut) ? { cut } : {}) })),
     manualRanges: state.manualRanges,
     decisions: Object.fromEntries(Object.entries(state.decisions).map(([id, answer]) => [id, { keep: answer.keep }])),
@@ -182,6 +213,14 @@ export function savedState(state) {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+/** The term editor's thresholds, checked: anything that does not fit is the default. */
+export function restoredFilter(filter) {
+  if (!isObject(filter)) return { ...DEFAULT_FILTER };
+  return {
+    concepts: PAGE_CHOICES.includes(filter.concepts) ? filter.concepts : DEFAULT_FILTER.concepts,
+    names: PAGE_CHOICES.includes(filter.names) ? filter.names : DEFAULT_FILTER.names,
+  };
+}
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const boolMap = value => (isObject(value) ? Object.fromEntries(Object.entries(value).filter(([, v]) => typeof v === 'boolean')) : {});
 
@@ -194,7 +233,7 @@ export function restoredState(saved) {
   const kept = (Array.isArray(saved.entries) ? saved.entries : []).filter(entry => isObject(entry) && typeof entry.text === 'string');
   const entries = parsed.map(entry => {
     const own = kept.find(item => item.section === entry.section && item.text === entry.text) ?? {};
-    return { ...entry, id: typeof own.id === 'string' && /^e\d+$/.test(own.id) ? own.id : entry.id, status: pick(own.status, STATUSES, 'accepted'), ...(typeof own.kind === 'string' ? { kind: own.kind } : {}), ...(Number.isInteger(own.count) ? { count: own.count } : {}), ...(Number.isInteger(own.countLeftOut) ? { countLeftOut: own.countLeftOut } : {}) };
+    return { ...entry, id: typeof own.id === 'string' && /^e\d+$/.test(own.id) ? own.id : entry.id, status: pick(own.status, STATUSES, 'accepted'), ...(typeof own.kind === 'string' ? { kind: own.kind } : {}), ...savedFacts(own) };
   });
   const settings = isObject(saved.settings) ? {
     pageOne: typeof saved.settings.pageOne === 'string' && /^\d{0,5}$/.test(saved.settings.pageOne) ? saved.settings.pageOne : '',
@@ -203,6 +242,7 @@ export function restoredState(saved) {
     style: pick(saved.settings.style, RANGE_STYLES, DEFAULT_SETTINGS.style),
     sorting: pick(saved.settings.sorting, SORTINGS, DEFAULT_SETTINGS.sorting),
     collapse: saved.settings.collapse !== false,
+    filter: restoredFilter(saved.settings.filter),
   } : { ...DEFAULT_SETTINGS };
   const proposing = isObject(saved.proposing) && HEX64.test(saved.proposing.hash ?? '') && isObject(saved.proposing.answered)
     ? { hash: saved.proposing.hash, name: String(saved.proposing.name ?? ''), answered: Object.fromEntries(Object.entries(saved.proposing.answered).filter(([, answer]) => isObject(answer) && Array.isArray(answer.proposals))) }

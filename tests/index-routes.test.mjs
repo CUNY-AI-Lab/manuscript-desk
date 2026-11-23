@@ -45,8 +45,9 @@ test('each route sends its payload with the text as the user message and logs no
     assert.equal((await response.json()).content, '{"entries":[]}');
     assert.deepEqual(sent[0].payload, expected(row, body), path);
     assert.equal(sent[0].payload.reasoning_effort, 'low');
-    // Thinking is off for proposing terms (it ran out of room before answering) and on for the rest.
-    assert.deepEqual(sent[0].payload.chat_template_kwargs, { enable_thinking: path !== '/api/index/terms' });
+    // Thinking is off for proposing terms (it ran out of room before answering) and for sorting into
+    // subentries (as good and far cheaper), and on for the ambiguity question and the page ranges.
+    assert.deepEqual(sent[0].payload.chat_template_kwargs, { enable_thinking: path !== '/api/index/terms' && body.task !== 'subentries' });
     assert.equal(sent[0].headers.get('cookie'), null);
     assert.equal(sent[0].headers.get('x-cail-identity-jwt'), request.headers.get('x-cail-gateway-identity-jwt'));
     assert.deepEqual(logged, [], `${path} logs nothing`);
@@ -55,8 +56,9 @@ test('each route sends its payload with the text as the user message and logs no
 
 test('the terms call has room for its answer with thinking off; the judge call the usual cap', () => {
   const row = catalogRow('m-1');
-  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 9000);
+  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 10000);
   assert.equal(judgePayload({ model: 'm-1', task: 'ambiguous', text: HITS, row }).max_tokens, 10000);
+  assert.equal(judgePayload({ model: 'm-1', task: 'subentries', text: HITS, row }).max_tokens, 7000);
   assert.ok(JUDGE_OUTPUT_TOKENS < 10000);
 });
 

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { addEntries, editEntry, entriesFromText, indexEntries, mergeEntries, restoredState, savedState, setStatus, settingsFromSheet, termListFile, termsPlan, workingList, DEFAULT_SETTINGS } from '../web/index/state.js';
-import { shownEntries } from '../web/index/terms-view.js';
+import { addEntries, defaultJudgeScope, editEntry, entriesFromText, indexEntries, judgeScopes, mergeEntries, restoredFilter, restoredState, savedState, setStatus, settingsFromSheet, termListFile, termsPlan, workingList, DEFAULT_SETTINGS } from '../web/index/state.js';
+import { shownEntries, viewEntries } from '../web/index/terms-view.js';
 import { createStore } from '../web/shared/store.js';
 import { findHits } from '../lib/index/hits.js';
 import { newSheet } from '../lib/rules/schema.js';
@@ -105,4 +105,35 @@ test('the plan says the number of calls before stage 1 runs', () => {
   const plan = termsPlan(paragraphs, new Set([0]));
   assert.ok(plan.calls >= 2);
   assert.match(plan.text, /^\d+ model calls, one per passage of about 9,000 characters; 1 paragraph of bibliography left out\.$/);
+});
+
+test('the term editor ranks the proposals and hides those below the thresholds until asked', () => {
+  const made = (text, extra) => ({ id: text, text, section: 'terms', kind: 'concept', status: 'proposed', subentries: [], see: [], seeAlso: [], count: 1, spread: 1, passages: 1, ...extra });
+  const list = [made('once'), made('wide', { spread: 4, passages: 2 }), made('Example, Ada', { section: 'names', kind: 'person' }), made('kept', { status: 'accepted' })];
+  const view = viewEntries(list, {}, { concepts: 2, names: 1 });
+  assert.deepEqual(view.shown.map(entry => entry.text), ['wide', 'Example, Ada', 'kept']);
+  assert.equal(view.below, 1);
+  assert.deepEqual(viewEntries(list, { below: true }, { concepts: 2, names: 1 }).shown.map(entry => entry.text).sort(), ['Example, Ada', 'kept', 'once', 'wide']);
+  assert.deepEqual(viewEntries(list, { order: 'list' }, { concepts: 1, names: 1 }).shown.map(entry => entry.text), ['once', 'wide', 'Example, Ada', 'kept']);
+  assert.deepEqual(DEFAULT_SETTINGS.filter, { concepts: 2, names: 1 });
+  assert.deepEqual(restoredFilter({ concepts: 9, names: 3 }), { concepts: 2, names: 3 });
+  assert.deepEqual(restoredFilter('nonsense'), { concepts: 2, names: 1 });
+  // The facts and the thresholds are kept in this browser and come back.
+  const saved = savedState({ entries: list, settings: { ...DEFAULT_SETTINGS, filter: { concepts: 3, names: 1 } }, proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} });
+  const back = restoredState(structuredClone(saved));
+  assert.deepEqual(back.settings.filter, { concepts: 3, names: 1 });
+  assert.deepEqual(back.entries.find(entry => entry.text === 'wide').spread, 4);
+});
+
+test('the judge reads the entries the author marked, those the tool flags, or both, each with hits', () => {
+  const { entries } = entriesFromText('Terms:\nriver [ambiguous]\nlake\nsea [ambiguous]\n');
+  const [river, lake, sea] = entries;
+  const reasons = new Map([[river.id, ['marked by you', 'found 2 times in lower case']], [lake.id, ['found 1 time in lower case']], [sea.id, ['marked by you']]]);
+  const byEntry = new Map([[river.id, { hits: [{ id: 'h1' }] }], [lake.id, { hits: [{ id: 'h2' }] }], [sea.id, { hits: [] }]]);
+  const scopes = judgeScopes(entries, reasons, byEntry);
+  assert.deepEqual(scopes.marked.map(entry => entry.text), ['river']);
+  assert.deepEqual(scopes.flagged.map(entry => entry.text), ['river', 'lake']);
+  assert.deepEqual(scopes.both.map(entry => entry.text), ['river', 'lake']);
+  assert.equal(defaultJudgeScope(scopes), 'marked');
+  assert.equal(defaultJudgeScope({ marked: [], flagged: [lake], both: [lake] }), 'flagged');
 });

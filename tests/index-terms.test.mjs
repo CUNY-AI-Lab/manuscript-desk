@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTermPassages, countAndDrop, leftOutParagraphs, mergeProposals, nameParts, parseTermsReply, proposeTerms } from '../lib/index/terms.js';
+import { PAGE_CHARS, buildTermPassages, compatible, corporateName, countAndDrop, headingLike, leftOutParagraphs, mergeProposals, nameParts, parseTermsReply, personHeading, proposeTerms } from '../lib/index/terms.js';
 import { serializeTermList } from '../lib/index/termlist.js';
 
 // An invented manuscript's paragraphs, in the reader's shape.
@@ -108,4 +108,53 @@ test('a title proposed under its first word after the article is also searched a
   assert.equal(entry.text, 'Long Night, The (The Long Night)');
   const { entries } = countAndDrop([entry], [para(0, 'She wrote The Long Night in a year.')]);
   assert.equal(entries[0].count, 1);
+});
+
+test('a person in index form: honorifics out, a lower-case particle after the forenames, a body is an organization', () => {
+  assert.equal(personHeading('de Example, Ada'), 'Example, Ada de');
+  assert.equal(personHeading('van der Sample, Ben'), 'Sample, Ben van der');
+  assert.equal(personHeading('De Sample, Ben'), 'De Sample, Ben', 'a capitalized particle is part of the surname');
+  assert.equal(personHeading('Example, Dr. Ada'), 'Example, Ada');
+  assert.equal(personHeading('Example, Ada, Jr.'), 'Example, Ada, Jr.');
+  assert.equal(personHeading('Placeholder'), 'Placeholder');
+  assert.equal(corporateName('Example Brothers'), true);
+  assert.equal(corporateName('Example, Ada'), false);
+  const merged = mergeProposals([proposal('de Example, Ada', 'person'), proposal('Example, Ada de', 'person', { passage: 'p2' }), proposal('Invented Records', 'person')]);
+  assert.deepEqual(merged.map(entry => [entry.text, entry.section, entry.kind]), [['Example, Ada de', 'names', 'person'], ['Invented Records', 'terms', 'organization']]);
+});
+
+test('forenames: a short form, a nickname in quotation marks; two different people stay apart', () => {
+  assert.equal(compatible(['Bob'], ['Bobby']), true);
+  assert.equal(compatible(['Sam'], ['Samuel', 'J.']), true);
+  assert.equal(compatible(['John', '“Sonny”'], ['Sonny']), true);
+  assert.equal(compatible(['Al'], ['Alfred']), false, 'two letters are too few');
+  assert.equal(compatible(['Ada'], ['Bea']), false);
+  const merged = mergeProposals([proposal('Sample, Bob', 'person'), proposal('Sample, Bobby', 'person', { passage: 'p2' })]);
+  assert.deepEqual(merged.map(entry => entry.text), ['Sample, Bobby (Bob Sample)']);
+});
+
+test('a title with its article and without, a work and a concept of the same words, and a person under another name merge', () => {
+  const merged = mergeProposals([
+    proposal('Long Night, The', 'work'), proposal('The Long Night', 'work', { passage: 'p2' }),
+    proposal('Grain of the Sea', 'work'), proposal('grain of the sea', 'concept', { passage: 'p2' }), proposal('grain of the sea', 'concept', { passage: 'p3' }),
+    proposal('Example, Kay', 'person', { variants: ['Lee Other'] }), proposal('Other, Lee', 'person', { passage: 'p2' }),
+  ]);
+  assert.deepEqual(merged.map(entry => entry.text).sort(), ['Example, Kay (Lee Other)', 'Long Night, The (The Long Night)', 'grain of the sea']);
+  assert.equal(merged.find(entry => entry.text.startsWith('Example')).passages, 2);
+});
+
+test('the facts proposals are ranked by: pages of about PAGE_CHARS characters, paragraphs, a heading; and whether a passage discusses it', () => {
+  const long = 'Filler words about other things. '.repeat(Math.ceil(PAGE_CHARS / 33));
+  const book = [para(0, 'Lanterns at Night'), para(1, `Lanterns were common. ${long}`), para(2, `${long} lanterns again.`), para(3, 'A note on rivers, once.')];
+  const merged = mergeProposals([proposal('lanterns', 'concept', { discussed: true }), proposal('rivers', 'concept')]);
+  const { entries } = countAndDrop(merged, book);
+  const of = text => entries.find(entry => entry.text === text);
+  assert.deepEqual([of('lanterns').count, of('lanterns').paragraphs, of('lanterns').inHeading, of('lanterns').discussed], [3, 3, true, 1]);
+  assert.ok(of('lanterns').spread >= 2);
+  assert.deepEqual([of('rivers').spread, of('rivers').inHeading, of('rivers').discussed], [1, false, 0]);
+  assert.equal(headingLike(para(9, 'Chapter Two: The Lanterns')), true);
+  assert.equal(headingLike(para(9, 'A sentence that ends as prose does.')), false);
+  assert.equal(headingLike({ index: 9, text: 'a quiet title', hints: { styleId: 'Heading2' } }), true);
+  const [reply] = parseTermsReply(JSON.stringify({ entries: [{ heading: 'archives', kind: 'concept', discussed: true, quote: 'Archives were scarce; the archive' }] }), PASSAGE).proposals;
+  assert.equal(reply.discussed, true);
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runCalls } from '../lib/index/runner.js';
-import { buildBatches, judgePlan, parseAssignments, parseDecisions, runJudge } from '../lib/index/judge.js';
+import { PAGE_CONTEXTS, buildBatches, evidenceFound, judgePlan, pageLine, parseAssignments, parseDecisions, runJudge } from '../lib/index/judge.js';
 import { applyExclusions, buildWindows, findMatter, headingAt, joinRanges, pageDigest, parseManualRanges, parseRanges } from '../lib/index/matter.js';
 import { findHits } from '../lib/index/hits.js';
 import { parseTermList } from '../lib/index/termlist.js';
@@ -60,11 +60,38 @@ test('batches number each hit, mark it and give its page; answers count only for
   assert.match(batch.text, /^Index entry: Bush\nSearched for: Bush\nThis entry is a person\.\nWhy its hits are checked: found 1 time in lower case\.\nPlaces found:\n\[1\] p\. 1 \(first line of the page\): The ⟦Bush⟧ family met/);
   assert.match(batch.text, /\[2\] p\. 1 \(first line of the page\): .*A ⟦bush⟧ grew\./);
   assert.equal(batch.hitIds.length, 3);
-  const decisions = parseDecisions(JSON.stringify({ decisions: [{ hit: 2, keep: false, reason: 'a plant' }, { hit: 9, keep: false }, { hit: 1, keep: 'yes' }] }), batch);
-  assert.deepEqual([...decisions], [[batch.hitIds[1], { keep: false, reason: 'a plant' }]]);
+  const decisions = parseDecisions(JSON.stringify({ decisions: [{ hit: 2, keep: false, reason: 'a plant', evidence: 'A bush grew' }, { hit: 9, keep: false }, { hit: 1, keep: 'yes' }, { hit: 3, keep: true, reason: 'the person' }] }), batch);
+  assert.deepEqual([...decisions], [[batch.hitIds[1], { keep: false, reason: 'a plant', evidence: 'A bush grew' }], [batch.hitIds[2], { keep: true, reason: 'the person' }]]);
+  assert.equal(decisions.unverified, 0);
   assert.equal(parseDecisions('nonsense', batch), null);
-  const sorted = parseAssignments(JSON.stringify({ assignments: [{ hit: 1, subentry: 'S2' }, { hit: 2, subentry: null }, { hit: 3, subentry: 'S7' }] }), batch, 2);
-  assert.deepEqual([...sorted.values()], [1, null]);
+});
+
+test('a drop counts only with evidence from its own place; a kept hit needs none', () => {
+  const { entries } = parseTermList('Names:\nBush\n');
+  const { byEntry } = findHits(BOOK, entries);
+  const [batch] = buildBatches('ambiguous', entries[0], byEntry.get(entries[0].id).hits);
+  const reply = decisions => parseDecisions(JSON.stringify({ decisions }), batch);
+  // Evidence from another place, too short, missing, or not in the text at all: undecided.
+  const out = reply([{ hit: 1, keep: false, evidence: 'spoke at length' }, { hit: 2, keep: false, evidence: 'A' }, { hit: 3, keep: false }, { hit: 1, keep: false, evidence: 'words not there' }]);
+  assert.equal(out.size, 0);
+  assert.equal(out.unverified, 4);
+  // The marks around the hit are not part of the evidence; case and spacing aside.
+  assert.equal(evidenceFound('A  BUSH grew', batch.contexts[1]), true);
+  assert.equal(evidenceFound('⟦bush⟧ grew', batch.contexts[1]), true);
+});
+
+test('the subentry question numbers pages, each with the words around its hits, and an answer covers the page', () => {
+  const book = pages('Rome spoke. Later Rome again. And Rome a third time, Rome a fourth.', 'Rome flooded.');
+  const { entries } = parseTermList('Terms:\nRome\n  speeches (spoke)\n  floods\n');
+  const { byEntry } = findHits(book, entries);
+  const hits = byEntry.get(entries[0].id).hits;
+  const [batch] = buildBatches('subentries', entries[0], hits, { subentries: entries[0].subentries });
+  assert.deepEqual(batch.places.map(place => place.length), [4, 1]);
+  assert.match(batch.text, /Subentries:\n\[S1\] speeches\n\[S2\] floods\nPages found:\n\[1\] p\. 1: .*⟦Rome⟧.*\n\[2\] p\. 2: ⟦Rome⟧ flooded\./);
+  assert.ok(pageLine(1, hits.slice(0, 4)).split(' / ').length <= PAGE_CONTEXTS);
+  const sorted = parseAssignments(JSON.stringify({ assignments: [{ n: 1, subentry: 'S1' }, { n: 2, subentry: null }, { n: 3, subentry: 'S1' }, { page: 2, subentry: 'S2' }] }), batch, 2);
+  assert.deepEqual([...sorted.values()], [0, 0, 0, 0, null], 'a printed page number is never taken for a place');
+  assert.deepEqual([...parseAssignments(JSON.stringify({ assignments: [{ hit: 2, subentry: 'S7' }] }), batch, 2).values()], [], 'an unknown subentry is no answer');
 });
 
 test('batches stay under the hit limit; the plan counts hits and calls', () => {
@@ -80,8 +107,8 @@ test('runJudge collects decisions by hit id and sorting by subentry', async () =
   const { entries } = parseTermList('Terms:\nriver\n  speeches (spoke)\n  floods\nNames:\nBush\n');
   const { byEntry } = findHits(BOOK, entries);
   const callJudge = async ({ task, text }) => ({ content: task === 'ambiguous'
-    ? JSON.stringify({ decisions: [...text.matchAll(/^\[(\d+)\]/gm)].map(match => ({ hit: Number(match[1]), keep: !/⟦bush⟧/.test(text.split('\n').find(line => line.startsWith(`[${match[1]}]`))), reason: 'checked' })) })
-    : JSON.stringify({ assignments: [{ hit: 1, subentry: 'S1' }] }) });
+    ? JSON.stringify({ decisions: [...text.matchAll(/^\[(\d+)\]/gm)].map(match => ({ hit: Number(match[1]), keep: !/⟦bush⟧/.test(text.split('\n').find(line => line.startsWith(`[${match[1]}]`))), reason: 'checked', evidence: 'bush grew' })) })
+    : JSON.stringify({ assignments: [{ n: 1, subentry: 'S1' }] }) });
   const judged = await runJudge({ task: 'ambiguous', entries: [entries[1]], byEntry, model: 'm', callJudge, wait: noWait });
   assert.deepEqual([...judged.answers.values()].map(answer => answer.keep), [true, false, true]);
   const sorted = await runJudge({ task: 'subentries', entries, byEntry, model: 'm', callJudge, wait: noWait });
