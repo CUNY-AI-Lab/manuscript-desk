@@ -136,3 +136,20 @@ test('the reading check reads each chapter with its authors\' notes, and the res
   const found = [{ kind: 'affiliation-inconsistent', paragraph: 18 }, { kind: 'typo', paragraph: 18 }];
   assert.deepEqual(withoutRepeats(found, [{ kind: 'affiliation-inconsistent', paragraphIndex: 18 }]), [{ kind: 'typo', paragraph: 18 }]);
 });
+
+test('a contents list kept as one block, a Word table of contents in a content control, is read line by line', () => {
+  const { paragraphs, roles, report } = book([
+    ['Invented Harbours', 'title-page'],
+    ['Contents', 'front-matter-heading'],
+    ['Introduction\t1\nSalt Roads\t5\nThe Tide Tables of Imaginary Ports\t9\nBibliography\t20', 'contents-entry'],
+    ['Introduction', 'title-block'],
+    ['Text.', 'body'],
+    ['Salt Roads', 'title-block'],
+    ['Text.', 'body'],
+    ['The Tide Tables of Imaginary Ports', 'title-block'],
+    ['Text.', 'body'],
+  ]);
+  const result = compareContents(checkContext({ paragraphs, roles, report, sheet: { ...SHEET, docType: 'monograph' } }));
+  assert.equal(result.chapters.filter(chapter => chapter.missing).length, 0, 'every chapter is in the list');
+  assert.equal(result.chapters.length, 3);
+});

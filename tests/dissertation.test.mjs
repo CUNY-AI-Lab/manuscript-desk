@@ -2,7 +2,7 @@
 // accessibility checks, on the invented dissertation of tests/dissertation-fixture.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { strFromU8, unzipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { DECLARED } from '../lib/format/declared.js';
 import { formatDocx } from '../lib/format/format.js';
 import { validateDocx } from '../lib/docx/validate.js';
@@ -80,6 +80,22 @@ test('a page-number distance that crowds the text is listed for the author', () 
   const sheet = withRule(preset(), { category: 'layout', slot: 'layout.page-number-distance', params: { inches: 1 } });
   const { result } = run({ ...sheet, rules: sheet.rules.filter(rule => !(rule.slot === 'layout.page-number-distance' && rule.params.inches === 0.75)) });
   assert.ok(Object.keys(result.report.needsAuthor).some(kind => kind.startsWith('sections whose page numbers stand so close')));
+});
+
+test('page numbers fixed on the page in a text box, which the header distance cannot move, are listed for the author', () => {
+  const { bytes, roles } = dissertation();
+  const files = unzipSync(bytes);
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  files['word/header9.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="${W}" xmlns:v="urn:schemas-microsoft-com:vml"><w:p><w:r><w:pict><v:shape style="position:absolute;margin-top:30pt;mso-position-vertical-relative:page"><v:textbox><w:txbxContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p></w:hdr>`);
+  files['word/_rels/document.xml.rels'] = strToU8(strFromU8(files['word/_rels/document.xml.rels']).replace('</Relationships>', '<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header9.xml"/></Relationships>'));
+  files['[Content_Types].xml'] = strToU8(strFromU8(files['[Content_Types].xml']).replace('</Types>', '<Override PartName="/word/header9.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>'));
+  const document = strFromU8(files['word/document.xml']);
+  const last = document.lastIndexOf('<w:sectPr>');
+  files['word/document.xml'] = strToU8(`${document.slice(0, last)}<w:sectPr><w:headerReference w:type="default" r:id="rId99"/>${document.slice(last + '<w:sectPr>'.length)}`);
+  const result = formatDocx({ bytes: zipSync(files), roles, sheet: preset(), date: DATE });
+  assert.equal(result.ok, true);
+  assert.ok(Object.keys(result.report.needsAuthor).some(kind => kind.startsWith('page numbers in a text box or frame fixed on the page')));
+  assert.equal(run().result.report.needsAuthor['page numbers in a text box or frame fixed on the page, which moving the header and footer does not move (put them in the header or footer itself, at least as far from the edge as the guidelines ask)'], undefined, 'not without one');
 });
 
 test('the margins can differ by side, and the sides the sheet leaves unset follow most of the text', () => {
