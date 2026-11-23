@@ -14,7 +14,8 @@ exactly what is left for them.
 The suite has two tools:
 
 1. **Formatter.** The author says what the manuscript is (article, monograph,
-   or edited collection), supplies the guidelines and the manuscript, and gets
+   edited collection, or dissertation or thesis; the fourth added 2026-11-23),
+   supplies the guidelines and the manuscript, and gets
    back the manuscript with every change as a Word tracked change, comments on
    what needs their judgment, and a To-dos list of what only they can supply.
 2. **Index Builder.** A new, model-assisted version of Stefano's
@@ -114,7 +115,8 @@ Stefano chose A.
 
 ### What the author does
 
-1. **Describe.** Pick article, monograph, or edited collection.
+1. **Describe.** Pick article, monograph, edited collection, or dissertation or
+   thesis.
 2. **Guidelines.** Upload a PDF or `.docx`, or paste the text. More than one
    source is allowed (a press often has a guide plus a series sheet).
 3. **Rule sheet.** Review the rules the tool read out of the guidelines. Each
@@ -167,6 +169,28 @@ conventions), chapter openings, running order, one file or many.
 Extra for edited collections: everything for monographs, plus per-chapter
 requirements (abstract, keywords, bio, per-chapter references or a shared
 bibliography), contributor materials, and consistency across chapters.
+
+Extra for dissertations and theses (added 2026-11-23; the guidelines are a
+university's or graduate school's format requirements, not a publisher's): title
+page, abstract, front and back matter and chapters as for books, without index,
+contributors or consistency across authors; settings for paper size, margins by
+side, line spacing by element, two page-number sequences (preliminary pages in
+lower-case roman with the title page counted but unnumbered, the body from
+arabic 1), the required order and presence of the parts, what the title page
+states, chapters on a new page, and caption position. The order and the title
+page are checked and commented, never rearranged or invented. For a
+dissertation, step 2 also offers built-in requirements (a rule sheet shipped
+with the tool, each rule quoting the published page with its address and the
+day it was read, read by no model); the CUNY Graduate Center's is the one built
+in, by the owner's decision, and others can be uploaded as for any document
+type.
+
+All document types, whatever the rule sheet says: accessibility checks on the
+formatted file (alt text, images of text, heading levels, table header rows,
+link text, colour, document title and language), each a comment and an item in
+an Accessibility section of the To-dos with a severity; a rule sheet's
+accessibility rules are named when they apply. Plan:
+`docs/superpowers/plans/2026-11-23-plan-dissertations-and-accessibility.md`.
 
 **Named style manuals.** Guidelines usually say "follow Chicago, with these
 exceptions". The tool ships baseline rule sheets for Chicago 17 and 18 (notes
