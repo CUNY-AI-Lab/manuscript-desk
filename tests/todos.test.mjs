@@ -123,3 +123,11 @@ test('the checklist gives each requirement a status: done, flagged, checked, to 
   assert.match(textOf(made.bytes), /Notes: Statement of restart\.\tdone by the tool\tApplied in the formatted file\./);
   assert.equal(Object.values(made.tally).reduce((sum, count) => sum + count, 0), rules.length);
 });
+
+test('the index conventions are listed for the Index Builder, not as unchecked', () => {
+  const run = pipeline();
+  run.sheet.rules.push({ id: 'index-a1', category: 'index', slot: 'index.page-ranges', statement: 'Abbreviate page ranges as Chicago does.', mode: 'fix', source: { kind: 'author' }, params: { style: 'chicago' }, enabled: true });
+  const statuses = Object.fromEntries(ruleStatuses(run).map(({ rule, status }) => [rule.id, status]));
+  assert.equal(statuses['index-a1'], 'index');
+  assert.match(textOf(checklistDocument(run).bytes), /Abbreviate page ranges as Chicago does\.\tfor the Index Builder\tLoad this rule sheet in the Index Builder/);
+});

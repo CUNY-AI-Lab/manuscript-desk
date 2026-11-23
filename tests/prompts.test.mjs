@@ -135,3 +135,10 @@ test('every slot has a line saying when it applies, and the prompt of its group 
     assert.ok(rulesPrompt({ docType, group }).includes(`"${id}" in "${spec.category}"`) && rulesPrompt({ docType, group }).includes(`Use it for ${SLOT_USES[id]}.`), id);
   }
 });
+
+test('the index conventions are offered for books, in the structure pass, and not for articles', async () => {
+  const { rulesPrompt: prompt } = await import('../server/prompts.js');
+  const book = prompt({ docType: 'monograph', group: 'structure' });
+  for (const slot of ['index.layout', 'index.page-ranges', 'index.sorting']) assert.ok(book.includes(`- "${slot}" in "index"`), slot);
+  assert.equal(prompt({ docType: 'article', group: 'structure' }).includes('index.layout'), false);
+});

@@ -43,6 +43,9 @@ const SETTINGS = {
   'keywords.count': { min: ['Fewest keywords'], max: ['Most keywords'] },
   'contributors.words': { max: ['About how many words in a note on a contributor'] },
   'anonymize': { required: ['Remove the authors’ names for anonymous review'] },
+  'index.layout': { layout: ['Index layout', { indented: 'Indented (each subentry on its own line)', 'run-in': 'Run-in (subentries in one paragraph)' }] },
+  'index.page-ranges': { style: ['Page ranges in the index', { full: 'Full (321–328)', chicago: 'Chicago (321–28, 101–8)', 'two-digit': 'At least two digits (104–08)' }] },
+  'index.sorting': { order: ['Order of index entries', { 'letter-by-letter': 'Letter by letter (Newark before New York)', 'word-by-word': 'Word by word (New York before Newark)' }] },
 };
 
 export const settingLabel = (slot, name) => SETTINGS[slot]?.[name]?.[0] ?? name;
