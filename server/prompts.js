@@ -48,7 +48,7 @@ ${SHAPE}
 
 Fields of each rule:
 - "category": one of the category ids below.
-- "slot": the slot id below that the requirement sets, with its "params". A requirement that a slot below describes always takes that slot, even when the sentence also says other things; when one sentence states the requirements of two slots, report one rule for each. When no slot fits, use "slot": null, "params": {}.
+- "slot": the slot id below that the requirement sets, with its "params". A requirement that a slot below describes always takes that slot. Report each requirement as its own rule: what a slot does not capture (a heading's typeface or size when the slot sets only its capitals, say) is a separate rule with "slot": null, even when the same sentence states both. When no slot fits, use "slot": null, "params": {}.
 - "statement": the requirement in one plain sentence addressed to the author.
 - "quote": the sentence or phrase of the guidelines that states the requirement, copied character for character, at most 400 characters. If no sentence in the guidelines supports a rule, leave the rule out.
 - "mode": one of
