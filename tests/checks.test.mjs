@@ -99,7 +99,7 @@ test('abstracts and keywords: missing, too long, and keywords counted, repeated 
     ['a', 'abstract-keywords', 'abstract.words', { max: 8 }, 'supply'],
     ['k', 'abstract-keywords', 'keywords.count', { min: 6, max: 10 }, 'supply'],
   ]);
-  assert.deepEqual(byCheck(result, 'abstract-missing').map(finding => [finding.paragraphIndex, finding.ruleId, finding.chapter]), [[11, 'a', 1]], 'at the end of the second chapter\'s title block');
+  assert.deepEqual(byCheck(result, 'abstract-missing').map(finding => [finding.paragraphIndex, finding.ruleId, finding.chapter]), [[11, 'a', 1]], 'on the last line of the second chapter\'s title block');
   assert.match(byCheck(result, 'abstract-missing')[0].message, /no abstract and no keywords[^]*about 8 words[^]*6 to 10/);
   assert.match(byCheck(result, 'abstract-length')[0].message, /has 13 words; the guidelines ask for about 8/);
   const keywords = byCheck(result, 'keywords-form');
@@ -202,7 +202,7 @@ test('quotations whose lines were joined, lines laid out with tabs, and Word tab
   assert.deepEqual(byCheck(result, 'table-for-layout').map(finding => finding.paragraphIndex), [8]);
   const joined = byCheck(result, 'quotation-lines-joined');
   assert.deepEqual(joined.map(finding => finding.paragraphIndex), [16, 18]);
-  assert.match(joined[0].message, /2 lines were joined back into one paragraph/);
+  assert.match(joined[0].message, /2 lines were put back together into one paragraph/);
   // Roots with only quotation lines between them are one quotation, one finding.
   const quotation = model([...CHAPTERS.slice(0, 6), ['First line of a quotation', 'block-quotation'], ['', null], ['Second paragraph of it', 'block-quotation'], ['Body text after it.', 'body'], ['Another quotation', 'block-quotation'], ...CHAPTERS.slice(6)]);
   const grouped = runChecks({ ...quotation, sheet: null, report: report({
@@ -210,7 +210,7 @@ test('quotations whose lines were joined, lines laid out with tabs, and Word tab
     declared: [{ kind: DECLARED.linesJoined, count: 4, places: [6, 8, 8, 10], removedWords: [], addedWords: [] }],
   }) });
   assert.deepEqual(byCheck(grouped, 'quotation-lines-joined').map(finding => finding.paragraphIndex), [6, 10]);
-  assert.match(byCheck(grouped, 'quotation-lines-joined')[0].message, /3 lines were joined back into 2 paragraphs/);
+  assert.match(byCheck(grouped, 'quotation-lines-joined')[0].message, /3 lines were put back together into 2 paragraphs/);
   for (const finding of [...byCheck(result, 'table-from-tabs'), ...joined]) assert.equal(finding.ruleId, null, 'these concern the formatter\'s own changes');
 });
 

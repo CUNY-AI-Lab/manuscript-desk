@@ -280,3 +280,173 @@ The tool reports the first two kinds itself; the others come from this compariso
 
 Spent in this round: $0.30 (the rule-sheet extraction, $0.03, and the labelling of the whole
 manuscript, $0.27, each once and cached).
+
+## Round 3: what is left for the author
+
+The stage: tell the author what is left for them, the way the hand job did with 39 Word comments
+addressed to the volume editors and four companion documents.
+
+### The answer key
+
+The 39 comments of the hand-formatted file were read with their anchors and keyed privately
+(`work/comments-key.json` in the case folder): for each, the chapter, the source paragraph it
+concerns (for a comment on text the manual job built, such as a rebuilt table or a new heading, the
+source paragraph it was built from), the role of that paragraph, a kind, and a class: `structure`
+(derivable from roles, formatting and the rule sheet, with no reading of prose), `reading` (needs a
+model to read the text) or `human` (a judgment or outside knowledge no tool should fake). A comment
+whose content spans classes takes the class of its core; 10 of the 39 also have a part in another
+class (6 a human part, 3 a structure part, 1 a reading part).
+
+| Kind | Structure | Reading | Human | Where |
+|---|---|---|---|---|
+| chapter-title (a title split, with quotation marks, in capitals, long without a subtitle) | 6 | | | chapters |
+| wording-inconsistent (two places name the same thing differently) | | 5 | | 3 in chapters, 2 front matter |
+| contents-mismatch (the old contents list disagrees with the chapter) | 2 | | | 1 chapter, 1 front matter |
+| heading-numbering (numbers added, or typed and incomplete) | 2 | | | chapters |
+| stray-or-duplicated-text | 2 | 1 | | chapters |
+| affiliation-inconsistent | | 2 | | chapters |
+| contributor-bio (missing, too short) | 1 | 1 | | front matter |
+| formatting-summary (what the pass changed) | 1 | | | front matter |
+| front-matter-to-supply (cover image and its credit) | 1 | | | front matter |
+| abstract-missing | 1 | | | chapter |
+| keywords-form | 1 | | | chapter |
+| bibliography-headings | 1 | | | chapter |
+| repeated-author-dash | 1 | | | chapter |
+| source-highlight (highlighted text in the source) | 1 | | | chapter |
+| figure-to-supply (file, size, permission, alt text, callouts) | 1 | | | chapter |
+| table-from-tabs | 1 | | | chapter |
+| table-for-layout (Word tables of parallel text) | 1 | | | chapter |
+| title-block-people (two affiliation lines joined) | 1 | | | chapter |
+| quotation-lines-joined | 1 | | | chapter |
+| note-on-title | 1 | | | chapter |
+| abbreviations-system | | 1 | | front matter |
+| typo | | 1 | | front matter |
+| missing-spaces | | 1 | | chapter |
+| list-of-illustrations (with a question about other chapters' images) | | | 1 | front matter |
+| **Total** | **26** | **12** | **1** | 29 in chapters (12 dev, 17 holdout), 10 front matter |
+
+Two thirds of what the hand job told the editors (26 of 39) needs no reading of prose: it follows
+from the roles, the formatting and the rules. Of those 26, 4 need the front matter or the old
+contents list, which no stage reads yet. A third (12) needs a model to read, and one is a judgment.
+
+### What was built
+
+- Six rule-sheet slots for what the checks read: `titles.quotes`, `figures.files`,
+  `figures.callouts`, `notes.titles`, `references.repeated-author`, `running-title.length`.
+- The formatter declares where it made each change (source paragraphs) and lists its figures.
+- `lib/checks/`: 21 checks, each run only when a rule asks for what it checks or when it concerns
+  a change the formatter made: the summary of the pass; chapter titles (split to verify, quotation
+  marks, capitals, long without a subtitle); abstracts and keywords (missing, length, number,
+  repeats, mixed separators); notes on title-block lines; repeated-author dashes; heading numbers
+  (added, or typed and incomplete); bibliography headings across chapters; joined quotations; what
+  each figure still needs (file, permission, alt text, caption, a mention in the text); tables typed
+  with tabs; Word tables of running text.
+- Word comments in the formatted file (one per place, by "CAIL Manuscript Desk", a general one at
+  the top with counts), and the validator extended to the comments part.
+- The To-dos list as its own `.docx`, by chapter and kind, each item naming its rule and quoting the
+  guideline sentence, then what to supply, then what was changed, flagged and skipped.
+- Companion documents, each only when a rule asks: abstracts and keywords, alt-text template,
+  running titles, checklist.
+- Running titles proposed by a model (`POST /manuscript/api/running-titles`), kept only when they fit
+  and add no word the title lacks; one more request, with the count, for any that is too long.
+- Tracked changes for the formatter's changes to words: split titles and author lines, rewritten
+  and added figure markers, added caption lines and caption numbers. Rejecting them all gives back
+  the source's words exactly (45 tracked changes on this case). Joined quotation lines, which
+  change no word, stay direct, declared and commented.
+
+The measure: `npm run todos-eval` (see the README). A key comment counts as produced when a finding
+of the same kind, in the same chapter, sits on its paragraph or within two paragraphs with text of
+it; each finding counts once. Findings are counted as places (kind and paragraph). The hand sheet
+grew from round 2's 7 rules to 21: the requirements the manual job relied on, each now quoting its
+guideline sentence from the verified extraction.
+
+### Measured runs (dev chapters: 12 comments, 12 of them structure; front matter shown apart)
+
+| Run | What changed | Structure produced, dev | Extra places, dev | Front matter, structure | Validity |
+|---|---|---|---|---|---|
+| 1 | Baseline: the stage as described above, one finding per chapter for joined quotations, bibliography headings compared without capitals | 8/12 | 7 | 1/4 | valid, 30 comments |
+| 2 | One finding per joined quotation (its paragraphs: those with only quotation lines between them) | 9/12 | 10 | 1/4 | valid |
+| 3 | Bibliography headings that differ only in capitals count as different | 10/12 | 10 | 1/4 | valid, 35 comments |
+| 3p | Run 3 with predicted roles (round 1's labelling) | 9/12 | 9 (and 2 in front matter) | 1/4 | valid |
+| 3e | Run 3 with this round's extracted sheet (134 rules) | 8/12 | 5 | 1/4 | valid |
+| 3e2 | Run 3 with round 2's extracted sheet (178 rules, none of the new slots) | 9/12 | 9 | 1/4 | valid |
+| 4 | Running-title proposals and tracked changes added (no change to the checks) | 10/12 | 10 | 1/4 | valid, 35 comments, 45 tracked changes |
+
+With predicted roles the first heading of one chapter is not labelled a heading (the heading-number
+finding moves out of reach), and the notes on contributors, which the labelling gives roles, become
+part of a chapter. The extracted sheets differ from run to run: this round's two extractions with the
+new slots kept 131 and 134 rules and filled 7 and 9 slots (3 and 4 of the 6 new ones); round 2's
+own code, run again today, kept 135 rules and filled 3. Round 2's cached sheet (178 rules, 9 slots)
+was a fuller run than any since: the subtitle split, the figure marker, the abstract length and the
+keyword count were left unslotted in all three runs this round, so with the extracted sheet the
+titles are not split (title block 10/11 in the formatting measurement) and the checks those slots
+gate do not run. Run-to-run variance in slot filling, not the new slots, is the cause.
+
+### Holdout (run once with run 4's configuration, nothing changed after; 17 comments, 10 structure)
+
+| Roles and sheet | Structure produced | Reading produced | Extra places | Validity |
+|---|---|---|---|---|
+| Gold, hand sheet | 7/10 | 0/7 | 7 | valid |
+| Predicted, hand sheet | 7/10 | 0/7 | 7 | valid |
+| Gold, extracted sheet | 5/10 | 0/7 | 2 | valid |
+
+The baseline run printed the holdout rows as well (7/10), before the script was changed to report the
+dev chapters by default; the two changes after it concern dev chapters only and leave the holdout
+number where it was. All chapters, gold roles and hand sheet: structure 18 of 26 (dev 10/12, holdout
+7/10, front matter 1/4), reading 0 of 12, human 0 of 1; 17 extra places.
+
+### Misses by kind (all chapters, gold roles, hand sheet)
+
+| Kind | Missed | Explanation |
+|---|---|---|
+| contents-mismatch | 2 (1 dev, 1 front matter) | Needs the manuscript's own contents list as a role, to compare with the chapter titles. Front matter is out of scope this round. |
+| stray-or-duplicated-text | 2 structure (holdout), 1 reading | A fragment and a duplicated run of lines. No rule in the sheet asks for a clean manuscript in a form a check can read, and a check with no rule behind it does not run. The gold also leaves these paragraphs without a role. |
+| source-highlight | 1 (dev) | Highlighting in the source, kept by the formatter. No rule asks about it. |
+| title-block-people | 1 (holdout) | The manual job joined two affiliation lines; nothing in the sheet asks for that. |
+| contributor-bio | 1 structure, 1 reading (front matter) | The notes on contributors have no role; out of scope. |
+| front-matter-to-supply | 1 (front matter) | The cover image is on the To-dos list as a requirement to supply, with its guideline sentence, but not as a comment, so the anchor rule counts it missed. |
+| reading class | 12 | No model check reads prose this round. |
+| human class | 1 | Not imitated, by design. |
+
+### Extra findings by kind (all chapters, gold roles, hand sheet)
+
+| Kind | Places | Judgment |
+|---|---|---|
+| quotation-lines-joined | 4 (dev) | Real: the other joined quotations of the same chapter; the reference's comment names three of them in its text. |
+| chapter-title | 6 (3 dev, 3 holdout) | Real but redundant: titles the formatter split at their colon, which the manual job split without a comment. Each split is now also a tracked change, so the comment asks a second time for the same decision. |
+| abstract-length | 3 (1 dev, 2 holdout) | Real: abstracts of 242 to 262 words where the guidelines ask for about 200. |
+| keywords-form | 2 (1 dev, 1 holdout) | Real: 12 keywords and 4 keywords where the guidelines ask for 6 to 10. |
+| repeated-author-dash | 2 (1 dev, 1 holdout) | Real: the chapters the reference's own dash comment names in its text, which it anchored once. |
+
+No extra finding was noise. The reference makes one comment where the tool makes one per place, and
+it leaves silent what it changed silently; most extras are those two habits.
+
+### Companion documents (gold roles, hand sheet)
+
+| Document | Produced | Against the reference |
+|---|---|---|
+| Abstracts and keywords | yes | Same 12 chapters; abstracts present for the same 11; a marked gap for the chapter without one. |
+| Alt texts (template) | yes | 7 figures, all in the same chapter, as in the reference. Each caption is marked as still to write: the captions are in notes attached to the old markers, which the reference moved by hand. |
+| Running titles | yes, with proposals | Same 12 chapters. Without the model: the main title where it fits 60 characters (11) and a blank (1). With the model: first request without lengths, 8 of 12 fit and 4 were too long; with each title's length in the request, 12 of 12 fit after one call. 5 of the 12 are the reference's own proposals; on average they share 55% of the reference proposal's words. |
+| Checklist | yes | 21 requirements of the hand sheet (the reference lists 26, from the editor's list and the guide's checklist): 14 flagged, 4 to supply, 2 done by the tool, 1 not checked. With this round's extracted sheet: 134 requirements, most of them to supply or not checked. |
+
+### What round 4 should do
+
+- The reading class, 12 comments: a model check per chapter over its title block, abstract and
+  keywords (and the notes on contributors once they have a role) for the same thing named two ways,
+  an affiliation that differs between two places, missing spaces and typing slips, each finding
+  guarded by a quotation that must occur in the paragraph.
+- Front matter roles (contents entry, contributor note, part title), so the manuscript's own contents
+  list can be compared with the chapters and the bios with the title blocks: 4 structure comments.
+- A slot for a clean manuscript (stray fragments, a paragraph repeated, highlighting left in), so the
+  3 structure comments of that kind have a rule to run on.
+- Make the extraction's slot filling stable: a second, short pass that asks only which slot each
+  extracted rule sets, or a vote of two runs; measure it on the same guidelines first.
+- Leave out the title-split comment where the split is a tracked change, or fold it into the summary.
+- Propose moving a caption from the note attached to an old marker into the caption line, as a
+  tracked change.
+- A second manuscript, ideally one whose source uses styles, before any of this is called general.
+
+Spent in this round: $0.088 (three extractions of the guidelines, $0.087, one of them with round 2's
+code to separate noise from the new slots; two running-title calls, $0.0008). Every answer is
+cached in the case's `work/` folder.
