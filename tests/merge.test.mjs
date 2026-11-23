@@ -97,29 +97,38 @@ test('keeps both and marks conflict for the same slot with different params', ()
   ]);
 });
 
-test('dedupes slot-less rules whose quotes overlap, keeping the longer statement', () => {
-  const shorter = { ...wordFile(), statement: 'Word file.', quote: 'Submit the manuscript as a Word file, with figures supplied as separate files' };
-  const longer = { ...wordFile(), statement: 'Submit the manuscript as a single Word file.', quote: '“Submit the  manuscript as a Word file”' };
-  const { rules, dropped } = mergeExtracted([shorter, footnotes(), longer], [G0]);
-  assert.equal(dropped, 0);
-  assert.deepEqual(ids(rules), ['notes-1', 'files-1']);
-  const [, files] = rules;
-  assert.equal(files.statement, 'Submit the manuscript as a single Word file.');
-  assert.equal(files.source.quote, '“Submit the  manuscript as a Word file”', 'the survivor keeps its own quote');
-  assert.equal(files.source.doc, 0);
-});
-
-test('merges a slot-less rule that overlaps two kept ones into one, in the place of the earlier', () => {
-  const word = { ...wordFile(), statement: 'Word file.' };
+test('dedupes slot-less rules with the same category, mode and quote, keeping the longer statement', () => {
+  const shorter = { ...wordFile(), statement: 'Word file.' };
   const unrelated = { ...wordFile(), statement: 'Footnotes, not endnotes.', quote: 'Notes should be footnotes rather than endnotes' };
-  const figures = { ...wordFile(), statement: 'Supply each figure as a separate file, not in the text.', quote: 'figures supplied as separate files' };
-  const both = { ...wordFile(), statement: 'Word file; figures apart.', quote: 'Submit the manuscript as a Word file, with figures supplied as separate files' };
-  const { rules, dropped } = mergeExtracted([word, unrelated, figures, both], [G0]);
+  // Equal after normalization and trimming quote marks at the edges.
+  const longer = { ...wordFile(), statement: 'Submit the manuscript as a single Word file.', quote: '“Submit the  MANUSCRIPT as a Word file”' };
+  const { rules, dropped } = mergeExtracted([shorter, footnotes(), unrelated, longer], [G0]);
   assert.equal(dropped, 0);
   assert.deepEqual(rules.map(rule => [rule.id, rule.statement]), [
-    ['files-1', 'Supply each figure as a separate file, not in the text.'],
+    ['notes-1', 'Use footnotes.'],
+    ['files-1', 'Submit the manuscript as a single Word file.'],
     ['files-2', 'Footnotes, not endnotes.'],
   ]);
+  assert.equal(rules[1].source.quote, '“Submit the  MANUSCRIPT as a Word file”', 'the survivor keeps its own quote');
+  assert.equal(rules[1].source.doc, 0);
+});
+
+test('keeps both slot-less rules when the same quote is in two categories', () => {
+  const asFiles = { ...wordFile(), quote: 'figures supplied as separate files', statement: 'Supply figures as separate files.' };
+  const asFigures = { ...asFiles, category: 'figures-tables', statement: 'Figures go in their own files.' };
+  const { rules } = mergeExtracted([asFiles, asFigures], [G0]);
+  assert.deepEqual(ids(rules), ['figures-tables-1', 'files-1']);
+});
+
+test('keeps both slot-less rules when the same quote has different modes', () => {
+  const { rules } = mergeExtracted([wordFile(), { ...wordFile(), mode: 'supply', statement: 'Provide a Word file of the manuscript.' }], [G0]);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.mode]), [['files-1', 'flag'], ['files-2', 'supply']]);
+});
+
+test('keeps both slot-less rules when one quote contains the other', () => {
+  const whole = { ...wordFile(), statement: 'Word file; figures apart.', quote: 'Submit the manuscript as a Word file, with figures supplied as separate files' };
+  const { rules } = mergeExtracted([wordFile(), whole], [G0]);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.statement]), [['files-1', 'Submit a Word file.'], ['files-2', 'Word file; figures apart.']]);
 });
 
 test('keeps slot-less rules whose quotes do not overlap', () => {
