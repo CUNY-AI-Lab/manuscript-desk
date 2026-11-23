@@ -221,7 +221,9 @@ publisher's requirements are about what each paragraph *is*.
 So before any checker runs, a model labels every paragraph with a role: title
 block, epigraph, abstract, keywords, heading (with level), block quotation,
 verse, figure or caption, list item, table, bibliography heading, bibliography
-entry, or body text. It sees each paragraph's text (long ones shortened) and
+entry, or body text; and, outside the chapters, a book's title page, the heading
+of a front- or back-matter section, a contents entry, a note on a contributor or
+a part title (added in round 6 of the evaluation loop). It sees each paragraph's text (long ones shortened) and
 its direct formatting (alignment, indent, bold, italic, size). Code then
 applies the structure the rule sheet asks for:
 

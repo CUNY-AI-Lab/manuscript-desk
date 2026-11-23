@@ -504,7 +504,7 @@ try {
   assert.equal(readingCalls.length, 0, 'the reading check is not run unless chosen');
   assert.match(await page7.locator('#reading-plan').textContent(), /^Optional, 2 model calls, one per chapter/);
   const itemsBefore = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
-  await page7.getByLabel('Also read the opening of each chapter for queries an editor would make').check();
+  await page7.getByLabel('Also read the opening of each chapter, and the front matter, for queries an editor would make').check();
   await page7.locator('#output-stale').waitFor();
   await page7.getByRole('button', { name: 'Format the manuscript' }).click();
   await page7.locator('#summary-flagged + ul li', { hasText: 'The reading check read the opening of 2 chapters and proposed 2 queries' }).waitFor();
