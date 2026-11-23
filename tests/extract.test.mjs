@@ -183,22 +183,38 @@ test('keeps the first 400 rules and counts the rest as dropped', async () => {
   assert.equal(validateSheet(sheet).ok, true);
 });
 
-test('takes manual.named from the first reply that names one', async () => {
+test('takes manual.named from the first reply that names one found in the guidelines', async () => {
   // The structure reply settles first, but references comes first in (document, part, group) order.
   const named = { style: null, references: '  The Chicago Manual of Style, 17th edition ', structure: 'MLA Handbook' };
+  const both = `${G0} Follow the Chicago  Manual of Style, 17th Edition, and the MLA Handbook for anything else.`;
   const { callRules } = fake(async request => {
     await tick(request.group === 'structure' ? 0 : 20);
     return reply([], named[request.group]);
   });
-  const { sheet } = await run(callRules);
+  const { sheet } = await run(callRules, { guidelines: [both] });
   assert.equal(sheet.manual.named, 'The Chicago Manual of Style, 17th edition');
 
   const long = fake(request => reply([], request.group === 'style' ? 'x'.repeat(200) : null));
-  assert.equal((await run(long.callRules)).sheet.manual.named, 'x'.repeat(120));
+  assert.equal((await run(long.callRules, { guidelines: [`${G0} ${'x'.repeat(200)}`] })).sheet.manual.named, 'x'.repeat(120));
   const none = fake(request => ({ content: JSON.stringify({ rules: [], manual: request.group === 'style' ? { named: '   ' } : null }) }));
   const sheet2 = (await run(none.callRules)).sheet;
   assert.equal(sheet2.manual.named, null);
   assert.equal(validateSheet(sheet2).ok, true);
+});
+
+test('a named manual is kept only when the guidelines name it', async () => {
+  // Short names count: the check is plain inclusion, not the quotation check.
+  const apa = fake(request => reply([], request.group === 'references' ? 'APA 7' : null));
+  assert.equal((await run(apa.callRules, { guidelines: [G1, `${G0} References follow APA 7 throughout.`] })).sheet.manual.named, 'APA 7', 'found in the second document');
+
+  const invented = fake(request => reply([], request.group === 'references' ? 'The Chicago Manual of Style' : null));
+  const { sheet } = await run(invented.callRules);
+  assert.equal(sheet.manual.named, null, 'a manual the guidelines do not name is dropped');
+  assert.equal(validateSheet(sheet).ok, true);
+
+  // The first reply in order names a manual the text does not; a later one names one it does.
+  const later = fake(request => reply([], { style: 'The Oxford Guide to Style', references: 'Merriam-Webster', structure: 'Word' }[request.group]));
+  assert.equal((await run(later.callRules)).sheet.manual.named, 'Merriam-Webster');
 });
 
 test('reports progress up to the total', async () => {
