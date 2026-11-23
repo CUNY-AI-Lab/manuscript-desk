@@ -192,6 +192,54 @@ test('keeps both slot-less rules when the same quote has different modes', () =>
   assert.deepEqual(rules.map(rule => [rule.id, rule.mode]), [['files-1', 'flag'], ['files-2', 'supply']]);
 });
 
+test('drops an other rule with the same quote as a rule in a specific category, whichever comes first', () => {
+  // The structure pass files a notes requirement under other; the references pass files it under notes.
+  const asOther = { ...footnotes(), category: 'other', slot: null, params: {}, mode: 'flag', statement: 'Use footnotes rather than endnotes throughout the manuscript.' };
+  for (const candidates of [[asOther, footnotes(), wordFile()], [footnotes(), wordFile(), asOther]]) {
+    const { rules, dropped } = mergeExtracted(candidates, [G0]);
+    assert.equal(dropped, 0, 'a cross-pass duplicate is not counted as left out');
+    assert.deepEqual(rules.map(rule => [rule.id, rule.slot, rule.mode, rule.statement, rule.params]), [
+      ['notes-1', 'notes.kind', 'fix', 'Use footnotes.', { kind: 'footnotes' }],
+      ['files-1', null, 'flag', 'Submit a Word file.', {}],
+    ]);
+  }
+  // Against a slot-less specific rule too, with the quote differing only in case and edge marks.
+  const otherFile = { ...wordFile(), category: 'other', mode: 'supply', statement: 'Provide the manuscript as a Word document file.', quote: '"submit the manuscript as a word file."' };
+  const { rules } = mergeExtracted([otherFile, wordFile()], [G0]);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.mode, rule.statement, rule.source.quote]), [
+    ['files-1', 'flag', 'Submit a Word file.', 'Submit the manuscript as a Word file'],
+  ]);
+});
+
+test('drops a slot-less rule with the same quote and category as a slotted rule, whichever comes first', () => {
+  const asComment = { ...footnotes(), slot: null, params: {}, mode: 'flag', statement: 'Notes must be footnotes, never endnotes, in every chapter.' };
+  for (const candidates of [[asComment, footnotes()], [footnotes(), asComment]]) {
+    const { rules, dropped } = mergeExtracted(candidates, [G0]);
+    assert.equal(dropped, 0);
+    assert.deepEqual(rules.map(rule => [rule.id, rule.slot, rule.mode, rule.statement, rule.params]), [
+      ['notes-1', 'notes.kind', 'fix', 'Use footnotes.', { kind: 'footnotes' }],
+    ]);
+  }
+  // A fix with wrong params, kept as a comment, next to the valid slotted one.
+  const badParams = { ...footnotes(), params: { kind: 'sidenotes' } };
+  const { rules } = mergeExtracted([badParams, footnotes()], [G0]);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.slot]), [['notes-1', 'notes.kind']]);
+});
+
+test('keeps rules with the same quote in two specific categories, slotted or not', () => {
+  const asFiles = { ...wordFile(), statement: 'Notes as footnotes in the Word file.', quote: 'Notes should be footnotes rather than endnotes' };
+  const { rules, dropped } = mergeExtracted([footnotes(), asFiles], [G0]);
+  assert.equal(dropped, 0);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.slot]), [['notes-1', 'notes.kind'], ['files-1', null]]);
+});
+
+test('keeps two other rules with the same quote and different modes', () => {
+  const asSupply = { ...captions(), mode: 'supply' };
+  const asFlag = { ...captions(), mode: 'flag', statement: 'Check every figure has a caption and a credit line.' };
+  const { rules } = mergeExtracted([asSupply, asFlag], [G1]);
+  assert.deepEqual(rules.map(rule => [rule.id, rule.mode]), [['other-1', 'supply'], ['other-2', 'flag']]);
+});
+
 test('keeps both slot-less rules when one quote contains the other', () => {
   const whole = { ...wordFile(), statement: 'Word file; figures apart.', quote: 'Submit the manuscript as a Word file, with figures supplied as separate files' };
   const { rules } = mergeExtracted([wordFile(), whole], [G0]);

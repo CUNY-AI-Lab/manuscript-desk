@@ -72,6 +72,43 @@ test('states the task, the reply shape and the verbatim-quote rule', () => {
   assert.match(prompt, /a monograph/);
 });
 
+// The labels of the categories read in the other passes, for one document type: every category of
+// another group except the catch-all, which is never a topic of its own.
+const otherTopics = (docType, group) => categoriesFor(docType).filter(entry => entry.group !== group && entry.id !== 'other').map(entry => entry.label);
+
+test('each pass reports only its own categories and names the other passes topics as left out', () => {
+  for (const docType of DOC_TYPES) {
+    for (const group of new Set(CATEGORIES.map(entry => entry.group))) {
+      const prompt = rulesPrompt({ docType, group });
+      assert.match(prompt, /Report only requirements that belong to the categories listed below/, `${docType} ${group}`);
+      const sentence = prompt.match(/Leave out requirements about these topics, which are read in a separate pass: ([^\n]*)\./);
+      assert.ok(sentence, `${docType} ${group}`);
+      assert.deepEqual(sentence[1].split(', '), otherTopics(docType, group), `${docType} ${group}`);
+    }
+  }
+});
+
+test('the style prompt excludes the references and structure topics and does not offer them as categories', () => {
+  const prompt = rulesPrompt({ docType: 'article', group: 'style' });
+  const listed = new Set(listedCategories(prompt).map(([id]) => id));
+  for (const label of ['Citations', 'References', 'Notes', 'Figures and tables', 'Title page', 'Anonymization']) {
+    assert.ok(otherTopics('article', 'style').includes(label), label);
+    const entry = CATEGORIES.find(item => item.label === label);
+    assert.equal(listed.has(entry.id), false, `${label} is not offered`);
+  }
+  assert.match(prompt, /which are read in a separate pass: [^\n]*\bCitations\b[^\n]*\bNotes\b[^\n]*\bAnonymization\b/);
+  assert.equal(prompt.includes('Front matter'), false, 'a category the document type does not have is not named');
+  assert.equal(prompt.includes('"other"'), false, 'the catch-all is not offered outside the structure pass');
+  assert.match(prompt, /Also leave out any requirement that fits none of the categories listed below/);
+});
+
+test('the structure prompt says other is only for requirements that fit no category of any pass', () => {
+  const prompt = rulesPrompt({ docType: 'monograph', group: 'structure' });
+  assert.ok(prompt.includes('- "other" (Other requirements)'));
+  assert.match(prompt, /Use "other" only for a requirement that fits none of the categories listed below and none of the topics read in the other passes/);
+  assert.equal(/Also leave out any requirement that fits none/.test(prompt), false);
+});
+
 test('refuses an unknown document type or group', () => {
   assert.throws(() => rulesPrompt({ docType: 'novel', group: 'style' }), /document type/);
   assert.throws(() => rulesPrompt({ docType: 'article', group: 'layout' }), /group/);
