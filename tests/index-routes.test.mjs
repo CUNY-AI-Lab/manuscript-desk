@@ -55,8 +55,9 @@ test('each route sends its payload with the text as the user message and logs no
 
 test('the terms call has room for its answer with thinking off; the judge call the usual cap', () => {
   const row = catalogRow('m-1');
-  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 9000);
+  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 10000);
   assert.equal(judgePayload({ model: 'm-1', task: 'ambiguous', text: HITS, row }).max_tokens, 10000);
+  assert.equal(judgePayload({ model: 'm-1', task: 'subentries', text: HITS, row }).max_tokens, 10000);
   assert.ok(JUDGE_OUTPUT_TOKENS < 10000);
 });
 
