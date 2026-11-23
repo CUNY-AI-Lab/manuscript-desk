@@ -3,7 +3,11 @@
 // guidelines kept outside the repository, calling the CAIL Gateway with the caller's own key, and
 // scores each sheet against the rules a case's expected.json says it must contain.
 //
-//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]] [--repeat <n>] [--save <folder>]
+//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]] [--repeat <n>] [--save <folder>] [--record <folder>] [--replay <folder>]
+//
+// --record writes every model answer, with the request it answered, to a JSON Lines file per case and
+// run in the folder named (outside the repository: a request holds guideline text), and --replay
+// scores again from such a folder without calling the Gateway, so a re-score costs nothing.
 //
 // With --repeat, each case is read n times and, per case, a table shows for each setting of the
 // rule sheet in how many runs it was filled and with which values (text values only as labels).
@@ -13,7 +17,8 @@
 // --save it also writes each rule sheet, as JSON, to the folder named (keep it outside the repository:
 // a sheet quotes the guidelines).
 
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,7 +51,9 @@ and calls the CAIL Gateway with the key in CAIL_API_KEY, which pays for every ca
   --all       also run every other supported file as its own unscored case
   --doc-type  document type of those unscored cases (default ${DEFAULT_DOC_TYPE})
   --repeat    read each case this many times and tabulate which settings each run filled
-  --save      write each rule sheet as JSON to this folder (outside the repository: sheets quote the guidelines)`;
+  --save      write each rule sheet as JSON to this folder (outside the repository: sheets quote the guidelines)
+  --record    write every model answer, with its request, to this folder (outside the repository)
+  --replay    score again from a folder written by --record, without calling the Gateway`;
 
 // ---------------------------------------------------------------------------------------------
 // Scoring
@@ -232,47 +239,114 @@ const countOf = value => (Number.isInteger(value) && value >= 0 ? value : null);
  * carrying { code, retry }. Shared with scripts/roles-eval.mjs.
  * @param {{ key: string, rows: Map<string, object>, usage: object, payloadOf: (request: object, row?: object) => object, fetchImpl?: typeof fetch }} options
  */
-export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = globalThis.fetch }) {
+export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = globalThis.fetch, record }) {
   return async function call(request) {
     const { signal } = request;
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const body = JSON.stringify(payloadOf(request, rows.get(request.model)));
-    usage.calls += 1;
-    let response, data;
-    try {
-      response = await fetchImpl(`${GATEWAY}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-        body,
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      });
-      const raw = await response.text();
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        data = null;
+    if (record) {
+      // A recorded answer (or failure) is told to `record`, which may also answer from a recording.
+      const replayed = await record.before?.(request, body);
+      if (replayed) {
+        // A replayed call counts as the call it was, with the tokens it used then.
+        usage.calls += 1;
+        usage.prompt += replayed.usage?.prompt ?? 0;
+        usage.completion += replayed.usage?.completion ?? 0;
+        if (replayed.code) throw coded(replayed.code, false);
+        return { content: replayed.content };
       }
-    } catch (error) {
-      const code = error?.name === 'TimeoutError' ? 'request_timeout' : error?.name === 'AbortError' ? 'request_cancelled' : 'network_error';
-      throw coded(code, false);
+      try {
+        const answer = await sendAndRead();
+        await record.after?.(request, body, answer);
+        return { content: answer.content };
+      } catch (error) {
+        await record.after?.(request, body, { code: error?.code ?? 'error' });
+        throw error;
+      }
     }
-    if (!response.ok) {
-      const code = typeof data?.error?.code === 'string' && /^[\w.:-]{1,80}$/.test(data.error.code) ? data.error.code : `http_${response.status}`;
-      const retryAfter = retryAfterOf(response.headers.get('retry-after'));
-      usage.refused = (usage.refused ?? 0) + 1;
-      throw coded(code, response.headers.get('x-should-retry') === 'true', { status: response.status, ...(retryAfter ? { retryAfter } : {}) });
+    return { content: (await sendAndRead()).content };
+    // The reply's content, with the tokens it used for a recording.
+    async function sendAndRead() {
+      usage.calls += 1;
+      let response, data;
+      try {
+        response = await fetchImpl(`${GATEWAY}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+          body,
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+        const raw = await response.text();
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = null;
+        }
+      } catch (error) {
+        const code = error?.name === 'TimeoutError' ? 'request_timeout' : error?.name === 'AbortError' ? 'request_cancelled' : 'network_error';
+        throw coded(code, false);
+      }
+      if (!response.ok) {
+        const code = typeof data?.error?.code === 'string' && /^[\w.:-]{1,80}$/.test(data.error.code) ? data.error.code : `http_${response.status}`;
+        const retryAfter = retryAfterOf(response.headers.get('retry-after'));
+        usage.refused = (usage.refused ?? 0) + 1;
+        throw coded(code, response.headers.get('x-should-retry') === 'true', { status: response.status, ...(retryAfter ? { retryAfter } : {}) });
+      }
+      if (!data || typeof data !== 'object') throw coded('invalid_model_response', false);
+      const prompt = countOf(data.usage?.prompt_tokens);
+      const completion = countOf(data.usage?.completion_tokens);
+      if (prompt === null || completion === null) usage.unmetered = (usage.unmetered ?? 0) + 1;
+      usage.prompt += prompt ?? 0;
+      usage.completion += completion ?? 0;
+      const choice = data.choices?.[0];
+      if (choice?.finish_reason === 'length') throw coded('model_output_limit', false);
+      const content = choice?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) throw coded('invalid_model_response', false);
+      return { content, usage: { prompt, completion } };
     }
-    if (!data || typeof data !== 'object') throw coded('invalid_model_response', false);
-    const prompt = countOf(data.usage?.prompt_tokens);
-    const completion = countOf(data.usage?.completion_tokens);
-    if (prompt === null || completion === null) usage.unmetered = (usage.unmetered ?? 0) + 1;
-    usage.prompt += prompt ?? 0;
-    usage.completion += completion ?? 0;
-    const choice = data.choices?.[0];
-    if (choice?.finish_reason === 'length') throw coded('model_output_limit', false);
-    const content = choice?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) throw coded('invalid_model_response', false);
-    return { content };
+  };
+}
+
+/**
+ * Recording of model answers for measure(): with `folder` and mode 'record', every answer and
+ * failure is appended, with its request, to <folder>/<label>.jsonl; with mode 'replay', the answers
+ * of that file are given back by the hash of the request body (in order, for a request asked more
+ * than once) and no call is made. Shared with tests.
+ */
+export function createRecorder({ folder, mode }) {
+  let label = null;
+  let replay = new Map();
+  const hash = body => createHash('sha256').update(body).digest('hex');
+  return {
+    async start(name) {
+      label = name;
+      if (mode !== 'replay') return;
+      replay = new Map();
+      let text = '';
+      try {
+        text = await readFile(path.join(folder, `${label}.jsonl`), 'utf8');
+      } catch {
+        throw new Error(`No recorded answers for ${label} in the replay folder.`);
+      }
+      for (const line of text.split('\n').filter(Boolean)) {
+        const entry = JSON.parse(line);
+        if (!replay.has(entry.hash)) replay.set(entry.hash, []);
+        replay.get(entry.hash).push(entry);
+      }
+    },
+    async before(request, body) {
+      if (mode !== 'replay') return null;
+      const answers = replay.get(hash(body));
+      if (!answers?.length) throw coded('not_recorded', false);
+      return answers.shift();
+    },
+    async after(request, body, answer) {
+      if (mode !== 'record') return;
+      await mkdir(folder, { recursive: true });
+      const { signal, ...asked } = request;
+      const entry = { hash: hash(body), request: asked, ...(answer.code ? { code: answer.code } : { content: answer.content, usage: answer.usage }) };
+      await appendFile(path.join(folder, `${label}.jsonl`), `${JSON.stringify(entry)}\n`);
+    },
   };
 }
 
@@ -280,8 +354,8 @@ export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = glo
  * A callRules for extractRuleSheet that calls the Gateway directly with a CAIL API key.
  * @param {{ key: string, rows: Map<string, object>, usage: object, fetchImpl?: typeof fetch }} options
  */
-export function createCallRules({ key, rows, usage, fetchImpl }) {
-  return createGatewayCall({ key, rows, usage, fetchImpl, payloadOf: ({ model, docType, group, text }, row) => rulesPayload({ model, docType, group, text, row }) });
+export function createCallRules({ key, rows, usage, fetchImpl, record }) {
+  return createGatewayCall({ key, rows, usage, fetchImpl, record, payloadOf: ({ model, docType, group, text }, row) => rulesPayload({ model, docType, group, text, row }) });
 }
 
 /**
@@ -289,10 +363,10 @@ export function createCallRules({ key, rows, usage, fetchImpl }) {
  * that calls the Gateway directly with a CAIL API key, as POST /api/settings does.
  * @param {{ key: string, rows: Map<string, object>, usage: object, fetchImpl?: typeof fetch }} options
  */
-export function createCallSettings({ key, rows, usage, fetchImpl }) {
-  return createGatewayCall({ key, rows, usage, fetchImpl, payloadOf: ({ model, docType, slots, text }, row) => {
+export function createCallSettings({ key, rows, usage, fetchImpl, record }) {
+  return createGatewayCall({ key, rows, usage, fetchImpl, record, payloadOf: ({ model, docType, slots, text, unreported }, row) => {
     usage.settingsCalls = (usage.settingsCalls ?? 0) + 1;
-    return settingsPayload({ model, docType, slots, text, row });
+    return settingsPayload({ model, docType, slots, text, unreported, row });
   } });
 }
 
@@ -448,10 +522,10 @@ export function table(header, rows) {
 const percent = (found, of) => (of > 0 ? `${((found / of) * 100).toFixed(1)}%` : '-');
 const tally = codes => Object.entries(codes.reduce((counts, code) => ({ ...counts, [code]: (counts[code] ?? 0) + 1 }), {})).map(([code, count]) => `${code} x${count}`).join(', ');
 
-async function measure(model, cases, { key, rows, log, repeat = 1, save }) {
+async function measure(model, cases, { key, rows, log, repeat = 1, save, recorder }) {
   const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0, settingsCalls: 0, refused: 0 };
-  const callRules = createCallRules({ key, rows: rows ?? new Map(), usage });
-  const callSettings = createCallSettings({ key, rows: rows ?? new Map(), usage });
+  const callRules = createCallRules({ key, rows: rows ?? new Map(), usage, record: recorder });
+  const callSettings = createCallSettings({ key, rows: rows ?? new Map(), usage, record: recorder });
   const results = [];
   for (const entry of cases) {
     if (entry.texts.length === 0) {
@@ -463,6 +537,7 @@ async function measure(model, cases, { key, rows, log, repeat = 1, save }) {
       log(`${model}: reading ${entry.name}${repeat > 1 ? ` (run ${run} of ${repeat})` : ''}`);
       const start = performance.now();
       try {
+        await recorder?.start(`${model}-${entry.name.replace(/[^A-Za-z0-9-]+/gu, '_')}-run${run}`);
         const calls = usage.calls;
         const { sheet, failures, asked } = await extractRuleSheet({ docType: entry.docType, model, guidelines: entry.texts, callRules, callSettings });
         results.push({ entry: named, sheet, failures, asked, calls: usage.calls - calls, seconds: (performance.now() - start) / 1000 });
@@ -502,7 +577,7 @@ function report(model, { usage, results }, row, out) {
       totals.failures += result.failures.length;
       totals.seconds += result.seconds;
       if (result.failures.length) notes.push(`${name}: failed calls: ${tally(result.failures.map(failure => failure.code))}`);
-      if (result.asked?.parts) notes.push(`${name}: settings questions to ${result.asked.parts} parts about ${result.asked.settings.length} settings filled ${result.asked.added.length}${result.asked.added.length ? ` (${result.asked.added.join(', ')})` : ''}`);
+      if (result.asked?.parts) notes.push(`${name}: settings questions to ${result.asked.parts} parts about ${result.asked.settings.length} settings filled ${result.asked.added.length}${result.asked.added.length ? ` (${result.asked.added.join(', ')})` : ''}${result.asked.sentences ? `; about ${result.asked.sentences} sentences no reading quoted, ${result.asked.recovered} rules` : ''}`);
     }
     if (score?.missed.length) notes.push(`${name}: missed ${score.missed.join('; ')}`);
   }
@@ -536,7 +611,7 @@ function report(model, { usage, results }, row, out) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, repeat: { type: 'string' }, save: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, repeat: { type: 'string' }, save: { type: 'string' }, record: { type: 'string' }, replay: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -560,7 +635,13 @@ async function main(argv, environment, { out = console.log, err = console.error 
     err(`--doc-type must be one of ${DOC_TYPES.join(', ')}.`);
     return 1;
   }
-  const key = environment.CAIL_API_KEY?.trim();
+  if (values.record !== undefined && values.replay !== undefined) {
+    err('--record and --replay cannot be used together.');
+    return 1;
+  }
+  const recorder = values.record !== undefined ? createRecorder({ folder: path.resolve(values.record), mode: 'record' })
+    : values.replay !== undefined ? createRecorder({ folder: path.resolve(values.replay), mode: 'replay' }) : undefined;
+  const key = values.replay !== undefined ? 'replay' : environment.CAIL_API_KEY?.trim();
   if (!key) {
     err('CAIL_API_KEY is not set. Set it to your CAIL Gateway API key; every model call is charged to that key.');
     return 1;
@@ -606,7 +687,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
       await mkdir(folder, { recursive: true });
       await writeFile(path.join(folder, `${model}-${entry.name.replace(/[^A-Za-z0-9-]+/gu, '_')}${entry.run ? `-run${entry.run}` : ''}.json`), JSON.stringify(sheet));
     };
-    const measured = await measure(model, cases, { key, rows, log: err, repeat, save });
+    const measured = await measure(model, cases, { key, rows, log: err, repeat, save, recorder });
     allPass = report(model, measured, rows?.get(model), out) && allPass;
   }
   return allPass ? 0 : 1;

@@ -397,6 +397,7 @@ const SPELLING = RULES.style[0];
 const FOOTNOTES = RULES.references[0];
 const PLAIN = RULES.structure[0];
 const FIGURES = { category: 'figures-tables', slot: 'figures.files', statement: 'Supply figures as separate files.', quote: 'with figures supplied as separate files', mode: 'flag', params: { separate: true } };
+const QUOTES = { category: 'quotations', slot: null, statement: 'Use double quotation marks.', quote: 'Please use double quotation marks for all quotations.', mode: 'flag', params: {} };
 
 // A fake callSettings: answers with `answer(request, attempt)` and records every request.
 function fakeSettings(answer = () => reply([])) {
@@ -418,8 +419,9 @@ test('each part is asked once about the settings no reading filled, after the re
   assert.equal(settings.calls.length, 1, 'one question for the one part');
   const [question] = settings.calls;
   const expected = slotsFor('article').filter(slot => !['spelling.variety', 'notes.kind'].includes(slot));
-  assert.deepEqual(question, { model: 'glm-5.3', docType: 'article', slots: expected, text: G0, signal });
-  assert.deepEqual(asked, { settings: expected, parts: 1, added: ['figures.files'] });
+  assert.deepEqual(question, { model: 'glm-5.3', docType: 'article', slots: expected, text: G0, unreported: ['Please use double quotation marks for all quotations.'], signal },
+    'with the one sentence that reads as a requirement and that no reading quoted');
+  assert.deepEqual(asked, { settings: expected, parts: 1, added: ['figures.files'], sentences: 1, recovered: 0 });
   assert.deepEqual(failures, []);
   assert.deepEqual(sheet.rules.map(rule => rule.slot), ['spelling.variety', 'notes.kind', 'figures.files', null]);
   assert.deepEqual(seen.at(-1), { done: 4, total: 4 });
@@ -451,9 +453,34 @@ test('two parts that state a setting differently make a conflict; no question is
   assert.deepEqual(sheet.rules.map(rule => [rule.params.kind, rule.conflict]), [['footnotes', true], ['endnotes', true]]);
   const none = fakeSettings();
   const all = slotsFor('article');
-  const result = await run(fake().callRules, { callSettings: none.callSettings, known: all });
-  assert.equal(none.calls.length, 0);
-  assert.deepEqual(result.asked, { settings: [], parts: 0, added: [] });
+  const quoting = fake(request => reply(request.group === 'style' ? [...RULES.style, QUOTES] : RULES[request.group]));
+  const result = await run(quoting.callRules, { callSettings: none.callSettings, known: all });
+  assert.equal(none.calls.length, 0, 'every setting known and every sentence quoted');
+  assert.deepEqual(result.asked, { settings: [], parts: 0, added: [], sentences: 0, recovered: 0 });
+});
+
+test('the sentences no reading quoted are asked about with the settings, and a rule counts only when it quotes one of them', async () => {
+  const settings = fakeSettings(() => reply([
+    QUOTES,
+    { ...PLAIN, statement: 'Again a Word file.' },
+    { ...QUOTES, quote: 'double quotation marks for all quotations, always' },
+  ]));
+  const { sheet, asked } = await run(fake().callRules, { callSettings: settings.callSettings, known: slotsFor('article') });
+  assert.equal(settings.calls.length, 1, 'asked although no setting is missing');
+  assert.deepEqual(settings.calls[0].slots, []);
+  assert.deepEqual(settings.calls[0].unreported, ['Please use double quotation marks for all quotations.']);
+  assert.deepEqual(asked, { settings: [], parts: 1, added: [], sentences: 1, recovered: 1 });
+  assert.deepEqual(sheet.rules.map(rule => rule.statement).sort(), ['Submit a Word file.', 'Use US spelling.', 'Use double quotation marks.', 'Use footnotes.'],
+    'the rule from the listed sentence is added; a rule quoting another sentence or an unverified one is not');
+});
+
+test('a second try of a failed settings question asks about no sentence, since it reads no part', async () => {
+  const failing = fakeSettings(() => { throw coded('upstream_timeout', false); });
+  const first = await run(fake().callRules, { callSettings: failing.callSettings });
+  const second = fakeSettings(() => reply([]));
+  await run(fake().callRules, { callSettings: second.callSettings, only: first.failures, known: ['spelling.variety', 'notes.kind'] });
+  assert.equal(second.calls.length, 1);
+  assert.equal('unreported' in second.calls[0], false);
 });
 
 test('a failed settings question is a failure of the settings group, and a second try asks only that part again', async () => {

@@ -1,6 +1,7 @@
 import { CAIL_CANONICAL_ISSUER, loadIdentityVerifierConfig, readIdentityKeyring, verifyIdentityJwt, verifyKeyringGatewayJwt } from '@cuny-ai-lab/cail-identity';
 import { CailError, createCailClient } from '@cuny-ai-lab/cail-client';
 import { DOC_TYPES, slotsFor } from '../lib/rules/schema.js';
+import { MAX_UNREPORTED, MAX_UNREPORTED_CHARS } from '../lib/rules/extract.js';
 import { modelControls } from './model.js';
 import { GROUPS, readingPayload, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
 
@@ -189,10 +190,14 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         const model = validateModel(body.model);
         if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph or an edited collection.');
         const offered = slotsFor(body.docType);
-        if (!Array.isArray(body.slots) || body.slots.length === 0 || new Set(body.slots).size !== body.slots.length || !body.slots.every(slot => offered.includes(slot))) throw new AppError('invalid_request', 'The request named a setting this tool does not read. Reload the page and try again.');
+        // The sentences no reading quoted, if any: a short list of short texts from the same part.
+        const unreported = body.unreported ?? [];
+        if (!Array.isArray(unreported) || unreported.length > MAX_UNREPORTED || !unreported.every(sentence => typeof sentence === 'string' && sentence.trim() && sentence.length <= 600)
+          || unreported.reduce((sum, sentence) => sum + sentence.length, 0) > MAX_UNREPORTED_CHARS) throw new AppError('invalid_request', 'The request listed sentences this tool cannot send. Reload the page and try again.');
+        if (!Array.isArray(body.slots) || (body.slots.length === 0 && unreported.length === 0) || new Set(body.slots).size !== body.slots.length || !body.slots.every(slot => offered.includes(slot))) throw new AppError('invalid_request', 'The request named a setting this tool does not read. Reload the page and try again.');
         // The text is never echoed in an error, logged or stored.
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
-        const payload = settingsPayload({ model, docType: body.docType, slots: body.slots, text: body.text, row: await catalogRow(model, signal) });
+        const payload = settingsPayload({ model, docType: body.docType, slots: body.slots, text: body.text, unreported, row: await catalogRow(model, signal) });
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished this question about the guidelines. Try again, or choose another model.');
         return json({ content, request_id: requestId });
       }

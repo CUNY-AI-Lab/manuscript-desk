@@ -409,7 +409,7 @@ function start() {
   // A refusal reaches extractRuleSheet as plain data: its code, whether and when to ask again, and the Worker's message.
   const refusal = error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error; };
   const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal }).catch(refusal);
-  const callSettings = ({ model, docType, slots, text, signal }) => api.post('/api/settings', { model, docType, slots, text }, { signal }).catch(refusal);
+  const callSettings = ({ model, docType, slots, text, unreported, signal }) => api.post('/api/settings', { model, docType, slots, text, ...(unreported ? { unreported } : {}) }, { signal }).catch(refusal);
 
   async function read({ retry = false } = {}) {
     const model = $('model-select').value;

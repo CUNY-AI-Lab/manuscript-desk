@@ -65,6 +65,34 @@ test('POST /api/settings refuses unknown, repeated, unoffered or missing setting
   assert.equal(sent.length, 0);
 });
 
+test('POST /api/settings sends the sentences no reading quoted before the text, with or without settings to ask', async () => {
+  const sent = [];
+  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  const unreported = ['Authors should send a signed form with the manuscript.', 'Please number every page.'];
+  for (const slots of [['abstract.words'], []]) {
+    const response = await handle(await settingsRequest(body({ slots, unreported })), env);
+    assert.equal(response.status, 200);
+  }
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0].messages, settingsPayload({ model: 'glm-5.3', docType: 'article', slots: ['abstract.words'], text: GUIDELINES, unreported }).messages);
+  assert.match(sent[0].messages[1].content, /^Sentences from which the first reading reported no requirement:\n\[1\] Authors should send a signed form with the manuscript\.\n\[2\] Please number every page\.\n\nThe guidelines:\n/);
+  assert.match(sent[0].messages[0].content, /Settings:/);
+  assert.match(sent[1].messages[0].content, /report it as a rule whose quote is copied from that sentence/);
+  assert.doesNotMatch(sent[1].messages[0].content, /Settings:/);
+  // Without sentences the prompt is the settings question alone, as before.
+  assert.doesNotMatch(settingsPrompt({ docType: 'article', slots: ['abstract.words'] }), /listed sentence/);
+});
+
+test('POST /api/settings refuses sentences that are not a short list of short texts', async () => {
+  const sent = [];
+  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  for (const unreported of ['one sentence', [''], [42], ['x'.repeat(601)], Array.from({ length: 31 }, () => 'A sentence.'), Array.from({ length: 12 }, () => 'y'.repeat(550))]) {
+    const response = await handle(await settingsRequest(body({ unreported })), env);
+    assert.equal(response.status, 400, JSON.stringify(unreported).slice(0, 60));
+  }
+  assert.equal(sent.length, 0);
+});
+
 test('a rate-limit refusal from the Gateway reaches the page as retryable, with its Retry-After', async () => {
   const reply = () => cailErrorResponse(429, cailErrorEnvelope({ code: 'upstream_rate_limited', type: 'rate_limit_error', message: 'Too many requests.', cail: { retry_after_seconds: 7 } }), { 'x-should-retry': 'true', 'retry-after': '7' });
   const handle = createHandler({ gatewayFetch: gateway({ reply }) });
