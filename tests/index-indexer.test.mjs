@@ -1,0 +1,150 @@
+// Copied from book-index (https://github.com/smorello87/book-index, commit 2d0e6e4),
+// Copyright (C) 2026 Stefano Morello, licensed under the GNU General Public License v3.0, which may be
+// combined into this AGPL-3.0 work (see README.md, Licence). Only this header, the import paths and the fixture names were changed.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import * as mupdf from 'mupdf';
+import { buildIndex, pageNumbering, pageVariants, addTerms } from '../lib/index/indexer.js';
+import { extractPdf } from '../lib/index/extract.js';
+
+const pages = (...texts) => texts.map((text, i) => ({ number: String(i + 1), text }));
+const pagesFor = (result, term) => result.entries.find((e) => e.term === term)?.pages;
+
+test('typed apostrophe matches curly apostrophe in the PDF', () => {
+  const r = buildIndex(pages('You’re welcome'), "You're");
+  assert.deepEqual(pagesFor(r, "You're"), ['1']);
+});
+
+test('words hyphenated across lines match both rejoined and as compounds', () => {
+  const r = buildIndex(pages('the intel-\nligence report', 'a well-\nknown fact'), 'intelligence\nwell-known');
+  assert.deepEqual(pagesFor(r, 'intelligence'), ['1']);
+  assert.deepEqual(pagesFor(r, 'well-known'), ['2']);
+});
+
+test('soft hyphen at a line end rejoins the word', () => {
+  const r = buildIndex(pages('the intel\u00AD\nligence report'), 'intelligence');
+  assert.deepEqual(pagesFor(r, 'intelligence'), ['1']);
+});
+
+test('plain line breaks never glue words together (no "sand" in "Smith\'s / and")', () => {
+  const r = buildIndex(pages("at Lucie-Smith's\nand the rest of\nthe group"), 'sand\nofthe');
+  assert.deepEqual(r.notFound, ['sand', 'ofthe']);
+});
+
+test('ligatures and non-breaking spaces are normalized', () => {
+  const r = buildIndex(pages('the ﬁnancial crisis'), 'financial crisis');
+  assert.deepEqual(pagesFor(r, 'financial crisis'), ['1']);
+});
+
+test('names: reversed when "Last, First", searched as typed otherwise', () => {
+  const r = buildIndex(pages('George W. Bush and Madonna'), '', 'Bush, George W.\nMadonna');
+  assert.deepEqual(pagesFor(r, 'Bush, George W.'), ['1']);
+  assert.deepEqual(pagesFor(r, 'Madonna'), ['1']);
+});
+
+test('footnote marker after a word still matches; substrings and longer numbers do not', () => {
+  const r = buildIndex(pages('Barack Obama2 spoke. They were helping. In 19845.'), 'Obama\nhelp\n1984');
+  assert.deepEqual(pagesFor(r, 'Obama'), ['1']);
+  assert.deepEqual(r.notFound, ['help', '1984']);
+});
+
+test('punctuation in terms, parenthetical variants and quote stripping', () => {
+  const r = buildIndex(pages('Help! she said', 'AI is here', 'deep learning'), 'Help!\nartificial intelligence (AI)\n“deep learning”');
+  assert.deepEqual(pagesFor(r, 'Help!'), ['1']);
+  assert.deepEqual(pagesFor(r, 'artificial intelligence (AI)'), ['2']);
+  assert.deepEqual(pagesFor(r, 'deep learning'), ['3']);
+});
+
+test('the same entry in both fields is merged, not overwritten', () => {
+  const entries = new Map();
+  addTerms(entries, 'Smith, John', false);
+  addTerms(entries, 'Smith, John', true);
+  assert.deepEqual([...entries.get('Smith, John')].sort(), ['John Smith', 'Smith, John']);
+});
+
+test('results sort alphabetically ignoring case and accents', () => {
+  const r = buildIndex(pages('zebra Éclair apple'), 'zebra\nÉclair\napple');
+  assert.deepEqual(r.entries.map((e) => e.term), ['apple', 'Éclair', 'zebra']);
+});
+
+test('page numbering: offset skips front matter, labels used when meaningful', () => {
+  assert.deepEqual(pageNumbering(4, null, 3), { numbers: [null, null, '1', '2'], source: 'offset' });
+  assert.deepEqual(pageNumbering(3, ['i', 'ii', '1'], null).numbers, ['i', 'ii', '1']);
+  assert.equal(pageNumbering(3, ['1', '2', '3'], null).source, 'physical');
+  assert.equal(pageNumbering(3, null, null).source, 'physical');
+  const r = buildIndex([{ number: null, text: 'apple' }, { number: '1', text: 'apple' }], 'apple');
+  assert.deepEqual(pagesFor(r, 'apple'), ['1']);
+});
+
+test('pageVariants deduplicates identical forms', () => {
+  assert.deepEqual(pageVariants('plain text'), ['plain text']);
+});
+
+test('end to end: fixture PDF through MuPDF', () => {
+  const data = new Uint8Array(readFileSync(new URL('./fixtures/index-sample.pdf', import.meta.url)));
+  const { texts, labels } = extractPdf(mupdf, data);
+  const { numbers, source } = pageNumbering(texts.length, labels, null);
+  assert.equal(source, 'labels');
+  const r = buildIndex(
+    texts.map((text, i) => ({ number: numbers[i], text })),
+    "You're\nintelligence\nfinancial\nMüller\nFrançois\nHelp!\nartificial intelligence (AI)\nhelp\n1984\nContents",
+    'Bush, George W.\nMadonna\nObama, Barack'
+  );
+  assert.equal(
+    r.index,
+    [
+      '1984: 4',
+      'artificial intelligence (AI): 4',
+      'Bush, George W.: 2',
+      'Contents: ii',
+      'financial: 3',
+      'François: 2',
+      'help: 4',
+      'Help!: 4',
+      'intelligence: 1, 4',
+      'Madonna: 2',
+      'Müller: 2',
+      'Obama, Barack: 3',
+      "You're: 1",
+    ].join('\n')
+  );
+  assert.deepEqual(r.notFound, []);
+});
+
+test('extractPdf reports password-protected and invalid files by name', () => {
+  const locked = new Uint8Array(readFileSync(new URL('./fixtures/index-locked.pdf', import.meta.url)));
+  assert.throws(() => extractPdf(mupdf, locked), { name: 'PasswordException' });
+  assert.throws(() => extractPdf(mupdf, new TextEncoder().encode('not a pdf at all')), { name: 'InvalidPDFException' });
+});
+
+test('a typed "book page 1" of 1 overrides the PDF labels', () => {
+  assert.deepEqual(pageNumbering(3, ['i', 'ii', '1'], 1), { numbers: ['1', '2', '3'], source: 'offset' });
+});
+
+test('names with a suffix: "King, Martin Luther, Jr." finds both common spellings', () => {
+  const r = buildIndex(pages('Martin Luther King Jr. spoke', 'as Martin Luther King, Jr. wrote'), '', 'King, Martin Luther, Jr.');
+  assert.deepEqual(pagesFor(r, 'King, Martin Luther, Jr.'), ['1', '2']);
+});
+
+test('sorting and letter groups share one key: leading punctuation and Ł/Ø ignored', () => {
+  const r = buildIndex(pages('#MeToo Łódź Ørsted Lagos Oslo Mars zebra'), '#MeToo\nŁódź\nØrsted\nLagos\nOslo\nMars\nzebra');
+  assert.deepEqual(r.entries.map((e) => e.term), ['Lagos', 'Łódź', 'Mars', '#MeToo', 'Ørsted', 'Oslo', 'zebra']);
+  assert.deepEqual([...new Set(r.entries.map((e) => e.letter))], ['L', 'M', 'O', 'Z']);
+});
+
+test('match capitalization: off by default, and "US" stops matching "us" when on', () => {
+  const book = pages('Tell us more.', 'The US economy', 'a bush in bloom', 'George Bush');
+  const loose = buildIndex(book, 'US\nBush');
+  assert.deepEqual(pagesFor(loose, 'US'), ['1', '2']);
+  assert.deepEqual(pagesFor(loose, 'Bush'), ['3', '4']);
+  const strict = buildIndex(book, 'US\nBush', '', { matchCase: true });
+  assert.deepEqual(pagesFor(strict, 'US'), ['2']);
+  assert.deepEqual(pagesFor(strict, 'Bush'), ['4']);
+});
+
+test('match capitalization keeps the other normalizations (curly apostrophes, ligatures)', () => {
+  const r = buildIndex(pages('O\u2019Brien and the \uFB01nal word'), "O'Brien\nfinal", '', { matchCase: true });
+  assert.deepEqual(r.notFound, []);
+});

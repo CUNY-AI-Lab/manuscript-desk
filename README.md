@@ -180,6 +180,8 @@ GNU Affero General Public License v3.0 only (see `LICENSE`). Because the tool is
 
 The `.docx` reader uses [fflate](https://github.com/101arrowz/fflate) (MIT) to unzip the file and [saxes](https://github.com/lddubeau/saxes) (ISC, with xmlchars, MIT) to parse its XML; both licences are compatible with the AGPL.
 
+The Index Builder's matcher (`lib/index/indexer.js` and `lib/index/extract.js`), its tests (`tests/index-indexer.test.mjs`) and their two PDF fixtures (`tests/fixtures/index-sample.pdf`, `tests/fixtures/index-locked.pdf`) are copied from [book-index](https://github.com/smorello87/book-index) (commit `2d0e6e4`), Copyright (C) 2026 Stefano Morello, under the GNU General Public License v3.0; each copied file says so at its top. GPL-3.0 code may be combined into an AGPL-3.0 work, and the combination is offered under the AGPL-3.0.
+
 This suite includes [MuPDF.js](https://mupdf.readthedocs.io/) by Artifex Software, Inc., which is licensed under the GNU AGPL v3.0 or later. Its licence is copied to `web/vendor/mupdf/LICENSE` and served with it from `vendor/mupdf/`.
 
 Developed for the CUNY AI Lab.
