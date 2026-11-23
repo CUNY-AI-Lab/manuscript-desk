@@ -138,6 +138,11 @@ Measurement:
   thinking off. The judge and page-ranges routes keep thinking on.
 - **Inverted titles.** A proposed title filed under its first word after an article also searches
   the title as written, found when the real page run left 27 such entries unmatched.
-- **Not built:** choosing which flagged entries the judge reads (it reads all of them, which on a
-  whole proposed list is hundreds of calls); a filter of proposals by how often they occur.
+- **Built in round 2** (see the evaluation record, round 2): the term editor ranks proposals and hides
+  those below thresholds the author sets (`lib/index/rank.js`); the judge reads the entries the author
+  marked, those the tool flags, or both, each choice with its calls stated, and a drop counts only with
+  evidence from the hit's own context; the subentry question is asked page by page; stage 1's prompt
+  asks for general subjects. A second pass over the proposed list asking for the organizing concepts of
+  each part of the book was built, measured and taken out: it added one of the index's concepts on dev
+  and its gathered forms made merging absorb other entries.
 
