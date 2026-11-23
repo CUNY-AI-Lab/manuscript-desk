@@ -821,3 +821,256 @@ catalog prices), the 18-case generality run ($0.38), four repeats of the low cas
 reading check on dev, holdout and the whole book with predicted roles ($0.34). Catalog prices take no
 account of the discount on cached input, so they add up to more than the Gateway billed. Every answer
 of the reading check is cached in the case's `work/` folder.
+
+## Round 6: the front matter, sentences a reading leaves out, the reading check on the page
+
+### A. Front matter
+
+**The gold.** The round 5 gold labelled the chapters only. Before any measurement this round, the
+non-empty paragraphs outside them were labelled by hand in the private gold, from the styles the
+hand-formatted reference gives the same text: 57 paragraphs in two spans recorded as `matter` (the
+book's title page and its old contents list before the introduction; a list of abbreviations and the
+notes on contributors between the introduction and the first chapter). No existing label changed. A
+line of underscores in the contents list, which the reference dropped, is left without a label, as
+the gold leaves other stray lines; the reference's two part-title pages have no source paragraph and
+are not gold. Four of the answer key's front-matter comments had been anchored on lines of the old
+contents list, because the front matter had no roles then; they were moved to the source paragraphs
+the reference anchors them on (the abbreviations heading, the notes heading, two notes), also before
+any measurement. The hand sheet gained the three rules the manual job relied on for its
+front-matter comments, each quoting the editor's checklist: a contents list, notes on contributors
+of about 100 words, and names kept the same across the contents, the notes and the chapters' first
+pages (24 rules).
+
+**What changed** (`lib/roles/roles.js`, `server/prompts.js`, `lib/format/`, `lib/checks/front.js`,
+`lib/checks/reading.js`, the review in `web/format/manuscript-state.js`):
+
+- Five roles: `title-page` (a book's own title page), `front-matter-heading` (Contents,
+  Abbreviations, Notes on Contributors and the like), `contents-entry` (one line of a typed contents
+  list, a part's name in it included), `contributor-note` and `part-title` (a part title standing
+  in the text; a source can carry one, though this one does not). They belong to no chapter: a
+  chapter ends before them, and what follows a matter heading (a list of abbreviations) is in no
+  chapter until the next title block. The labelling prompt says that front and back matter belong to
+  no chapter wherever they stand and that their headings are never section headings.
+- The formatter gives them styles of their own (`Book Title`, `Book Subtitle`, `Book Author`,
+  `Book Affiliation` from the title page's parts, `Front Matter Heading`, `Contents Entry`,
+  `Contributor Note`, `Part Title` on a new page), and removes spacer paragraphs from the start of the
+  front matter. The review groups the matter after a chapter under "Front or back matter", and its
+  menu has the five roles in plain words.
+- The title block's affiliation words now include the Spanish and Portuguese words for university
+  (an affiliation line in Spanish had been read as an author's name).
+- A setting for the length of a note on a contributor (`contributors.words`).
+- Two checks. The contents list against the chapters: each chapter's title and authors are matched
+  to the list's lines (a title wrapped onto a second line, an author line before or in the same line
+  as the title), and each difference is reported, once in a comment on the list and again at the
+  chapter: words of the title that differ (or "another title" when more than six do), an author the
+  entry leaves out, authors in another order, words beside the names the title page lacks (an
+  affiliation spelled otherwise), a chapter the list leaves out, a line that matches nothing in the
+  text, a section heading listed in other words. The notes on contributors against the chapters'
+  authors: notes are matched to authors by their opening words, compared letter by letter however a
+  name is spaced; an author with no note, a note on no author, a name spelled a letter or two apart,
+  an affiliation of the title page that the author's note does not name, and a note under half or
+  over one and a half times the length asked. Each runs only with a rule on the front matter, the
+  contributors or consistency, and names it.
+- The reading check reads each chapter with the notes on its authors after its opening, and the
+  title page, contents list, matter headings and any note no chapter took as one more unit. A model
+  query of the same kind at the same paragraph as a code check's finding is left out.
+
+**Role accuracy** (`npm run roles-eval`, each chapter with ten paragraphs before it, the matter
+spans with dev):
+
+| | Round 1 (run 6 configuration) | Round 6 |
+|---|---|---|
+| Dev, old roles | 98.0% (250/260 structural, 1 body as structural) | 98.0% (250/260, 1) |
+| Holdout, old roles (run once) | 99.0% (221/224, 4) | 99.0% (221/224, 4) |
+| Front matter, new labels | not labelled | 57/57 (title page 6/6, matter headings 3/3, contents entries 27/27, notes 14/14, abbreviation lines 7/7) |
+
+The dev confusions are round 1's thirteen, in the same places (prose quotations pasted line by line
+read as verse, 8; short bibliography lines read as headings, 2; and three single ones).
+
+**Comments** (gold roles, the hand sheet of 24 rules, the reading check on; front matter reported
+with dev, as before):
+
+| | Round 5 | Round 6 |
+|---|---|---|
+| Structure, dev chapters and front matter | 11/16 (10/12 and 1/4) | 14/16 (11/12 and 3/4) |
+| Structure, holdout | 7/10 | 7/10 |
+| Structure, all | 18/26 | 21/26 |
+| Reading, dev chapters and front matter | 0/5 | 2/5 |
+| Reading, holdout | 3/7 | 5/7 |
+| Reading, all | 3/12 | 8/12 by the script, 7/12 strictly (2/5 and 5/7; the eighth match is explained below) |
+
+The holdout chapters were labelled once and their reading check run once, with nothing changed
+after. The holdout confusions are round 1's seven, in the same places. Formatting is unchanged:
+dev 629 (10 near) with 100.0% style agreement and 20/20 title-block paragraphs, holdout 724 (4) with
+98.9% and 26/26, 45 tracked changes, no undeclared word change, valid; with this round's labels and
+the hand sheet, all chapters 1,353 (15 near) of 1,383 and 98.7%.
+
+What the new checks found that the key has: the contents comment on the old list, the chapter whose
+contents entry gives its authors in another order, the one-sentence note on a contributor, the
+editors who have no note (the reading-class comment on the notes), and the two affiliations of a
+title page that the authors' notes do not give (two reading-class comments, now found by code).
+The reading check found the typing slip in a note, two names or titles given two ways and the
+missing spaces in a keywords line. "8 of 12" counts one match that is not real: the key's comment on
+a part title has no paragraph, so the matching takes any front-matter finding of its kind, and a
+query about a university spelled two ways in one note took it. Strictly, 7 of 12.
+
+Still missed: in structure, the two stray or repeated passages and the highlighting (no rule asks
+for a clean manuscript), the two affiliation lines the manual job joined, and the cover image (on
+the To-dos list as a requirement to supply, not as a comment); in reading, the book's subtitle
+against the names of its parts (one prompt line asking for it was tried on dev, found nothing more
+and was taken out), the abbreviations list that belongs to one chapter, a stray symbol used as a
+typed note marker, and one name given two ways that the model did not report.
+
+Extra places: 61, against 42 in round 5. The code checks' extras are the per-chapter contents
+comments (8: each chapter whose entry in the old list differs, all real; the reference lists them
+in its one comment on the list), a name spelled a letter apart in a note and a note half again as
+long as asked (both real). The reading check kept 44 queries in 13 calls (2 chapters' answers ran
+out of room even in halves; their halves that answered are kept): 5 match the key and 39 are extra,
+of which 37 are real on my reading (a doubled word, a name misspelled, a missing space, an unmatched
+bracket, a year in the wrong place); the two doubtful ones are a comma a copyeditor might leave and
+a plural. Four of the front-matter extras are slips in the old contents list that the contents
+comparison also reports, in other words.
+
+With this round's labels and the round 5 extracted sheet (code checks only): structure 20/26,
+reading 3/12. The extracted sheet has no note length, so the one-sentence note is not found.
+
+### B. Requirements one reading leaves out
+
+**Why.** `npm run generality` can now record every answer with its request (`--record`) and score
+again from a recording (`--replay`; with both, only what the recording does not hold is asked).
+Five runs each of the edited-collection case that fell to 13 of 17 in round 5 (one part of 12,000
+characters), of a monograph guide of 23,000 characters in one part, and of an article style sheet
+of 36,000 characters in one part, with the round 5 code:
+
+| Case | Expected found, five runs | Rules per reading of the largest group | Output tokens of that reading (cap 6,000) |
+|---|---|---|---|
+| Edited collection, 17 expected | 16, 17, 15, 17, 16 (81/85) | 28 to 33 | 1,616 to 2,000 |
+| Monograph, 30 expected | 30 every time (150/150) | 67 to 73 | 4,313 to 4,788 |
+| Article style sheet, 30 expected | 30, 30, 29, 30, 30 (149/150) | 35 to 67 | 2,368 to 4,592 |
+
+Every case is a single part, so no requirement fell at a part boundary, and no reading ran out of
+output room: every reply ended normally, well under its cap. Each miss is a plain sentence that the
+reading of its group did not report at all, and which sentences go unreported changes from run to
+run: the readings stop early on a long list. Cutting each part's sentences out (`lib/rules/coverage.js`:
+paragraphs, list items at their bullets, sentences), keeping those whose wording asks something
+(a word of obligation or an opening imperative) and checking each against every quotation the
+part's readings gave: in all fifteen runs every missed requirement was among the sentences no
+quotation covered. Those were 14 to 19 of 40 such sentences on the edited collection, 15 to 20 of 97
+on the monograph (whose readings missed nothing) and 11 to 19 of 62 on the style sheet (19 in the
+run that missed a rule).
+
+**What changed** (`lib/rules/extract.js`, `lib/rules/coverage.js`, `server/prompts.js`,
+`POST /api/settings`):
+
+- After the readings, a part whose uncovered requirement sentences are at least a quarter of its
+  requirement sentences (and at least three) is asked once more, through the settings route, about
+  those sentences only (at most 30, 6,000 characters): the answer gives a verdict on each, and a
+  sentence it says asks something of the author becomes a rule whose quotation is the sentence
+  itself, with the category and statement the answer gives, never a setting or a fix. A failed question is a failure of its own group
+  and "Try again" asks the same sentences.
+- The settings question is as in round 5. The first wording put the sentences into it: the model
+  then answered with an empty list in four runs of five on the edited collection (74 of 85), and on
+  the style sheet filled every setting it was asked about with a stray quotation in two runs, so it
+  became a question of its own.
+- The verdict counts an example (a sample citation or sentence) as asking nothing; before that line,
+  examples on the style sheet were turned into 20 rules in five runs, after it 13.
+
+**Before and after** (five runs each; "after" reuses recorded readings, so the comparison is on the
+same readings with and without the new question):
+
+| Case | Before (round 5 code) | After, same readings without the question | After |
+|---|---|---|---|
+| Edited collection | 81/85 (lowest 15) | 73/85 (readings of the first try) | 83/85 (16, 17, 16, 17, 17) |
+| Article style sheet | 149/150 | 149/150 (the before readings) | 150/150 |
+| Monograph | 150/150 | 150/150 | 150/150, no question asked |
+
+On the edited collection the question was asked in all five runs and gave 9 to 19 rules a run; on
+the style sheet in two runs of five (6 and 7 rules); on the monograph never. Of the rules it adds,
+about two thirds on my reading of a sample are real requirements; the rest are advice (a suggestion to
+consider something, an option) that the verdict counts as asking.
+
+**The 18 cases**, `npm run generality -- --models deepseek-v4.1-flash-1017`, fresh, final code:
+
+| | Round 5 | Round 6 |
+|---|---|---|
+| Expected rules found | 417/438 (95.2%) | **424/438 (96.8%)** |
+| Calls | 110 (27 settings questions) | **129** (27 settings questions, 19 sentence questions) |
+| Lowest case | 76.5% (the edited collection above) | **70.0%** (another edited collection, 7 of 10) |
+| Failed or refused calls | 0 | 0 |
+| Cost at catalog prices | $0.38 | $0.43 |
+| Verdict | FAIL | **FAIL** |
+
+The total and the calls meet the bar; the floor for a case does not. The case under it is the
+shortest edited-collection guide (5,400 characters, 10 expected): its readings gave 7 rules and the
+sentence question 9 more, but the three it missed are items of bulleted lists under lead-ins that ask
+something (a sentence ending in a colon that says what the editor is responsible for, or what a
+chapter should include): noun phrases with no word of obligation, which the coverage code does not count as requirement sentences, so they were
+never asked about. A rule that makes such items inherit their lead-in was written after the run and
+checked offline against that run's recording (two of the three would have been asked); it was not
+measured and is not in the code. The edited collection of the brief found 16 of 17 and the Brill
+guidelines 25 of 25, with 19 settings (round 5's 18 and the new note length).
+
+### C. The reading check through the page
+
+`npm run dev` with the key, installed Chrome driven by Playwright (a private driver adapted from the
+smoke test), no mocks: the editor's note and the author guide as guidelines (edited collection),
+`source.docx` as the manuscript, the reading check ticked. To stay inside this round's allowance,
+the labels were not paid for a second time: the private driver put this round's labelling of the
+whole book (the `roles-eval` runs above, the same labelling code) into the browser's store as the
+page keeps it, and the page restored them when the file was chosen ("This is the file labelled
+before"), as it does after a reload. Downloads and the page's record went to the case's private
+`work/page-run-6/`.
+
+| Step | What happened | Time |
+|---|---|---|
+| 2 to 3 | 9 rules calls and 5 settings-route calls (3 settings questions, 2 sentence questions), none failed; 190 rules, 2 left out, one setting in conflict (the figure marker); 21 settings | 52 s |
+| 4 to 5 | 79,519 words in 1,460 paragraphs; labels restored, 14 review groups | 0 s |
+| 6 | The plan said 13 calls (12 chapters and the front matter); 21 reading calls, 6 of them answers that ran out of room (each such unit read again in halves), 1 unit still without an answer; then 1 running-titles call; 6 downloads | 400 s |
+
+Every download passed the structural validator. The formatted file has 76 comments, 50 of them the
+reading check's queries, each beginning "Query from a model's reading of the text"; the To-dos list
+has the same 50 entries; 45 tracked changes, 14 sections each restarting note numbers, 390 note
+references. `npm run format-eval -- --score` confirmed that the page's file has the same paragraphs,
+text and styles as the script's own formatting with those labels and that sheet, and measured it:
+1,346 (8 near) of 1,383 matched, 98.7% style agreement, 46/46 title block, no undeclared word change.
+
+No call was refused by the Gateway, so the rate-limit backoff was not exercised on the page this
+time (it is covered by the unit tests). The console's errors were the missing favicon and the six
+502 answers that ran out of room. Two wordings were wrong and are fixed: the summary said the check
+"read the opening of 13 chapters" (it is 12 and the front matter) and blamed an unanswered unit on
+the model service, where the answer had run out of room; and it counted 52 queries where 2 had been
+left out as the same as a code check's finding (50 in the file).
+
+### What remains
+
+- The 18-case floor: one short edited-collection guide at 7 of 10, its misses list items under a
+  lead-in that the coverage code does not see as requirements.
+- The sentence question adds rules of which about a third are advice the verdict counts as asking;
+  a scholar sees them in step 3.
+- The reading check's answers run out of room on some chapters with thinking on (2 of 13 units
+  unanswered in the gold run, 1 in the page run, after halves).
+- The book's subtitle against its part names, an abbreviations list that serves one chapter, stray
+  passages and highlighting (no rule asks for a clean manuscript), joined affiliation lines.
+- Part titles: the role exists but no source here has one, so it is untested on a real manuscript.
+- The page's labelling with the new roles was not run through the page this round (measured with
+  `roles-eval` instead).
+- A second manuscript, ideally one whose source uses styles.
+
+### What round 7 should do
+
+- Count a list item under a lead-in that asks something as a requirement sentence, asked with its
+  lead-in (written and checked offline this round), and measure the 18 cases again.
+- Tighten the sentence verdict on advice and options, measured by sampling the rules it adds, not
+  only by recall.
+- Give the reading check more output room, or smaller halves, where thinking uses it up.
+- Run the page's own labelling of the whole book with the new roles, and read the review's front
+  matter group with a scholar.
+- A second manuscript.
+
+Spent in this round: $1.20 by the Gateway's estimate ($4.90 to $3.70 of the allowance left): five
+readings each of three guideline cases before ($0.24 at catalog prices), the after measurements
+(three tries, mostly replayed from recordings, $0.24), the labelling of dev and front matter and of
+the holdout ($0.24), the reading check on dev (twice, the second for a prompt line taken out again)
+and holdout ($0.21), the 18-case run ($0.43) and the page run (about $0.24 by the Gateway's
+estimate). Every answer is recorded or cached in the case's `work/` folder (`roles-answers.json`,
+`reading-answers.json`, `generality-r6/`).
