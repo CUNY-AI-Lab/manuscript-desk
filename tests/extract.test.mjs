@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractRuleSheet } from '../lib/rules/extract.js';
-import { splitGuidelines } from '../lib/rules/chunk.js';
+import { splitGuidelines, splitInTwo } from '../lib/rules/chunk.js';
 import { GROUPS, MAX_RULES, validateSheet } from '../lib/rules/schema.js';
 
 // Guideline text written for these tests.
@@ -165,11 +165,11 @@ test('a failure keeps the message the rejection carried, cut to 300 characters',
 
 test('a failed group does not remove the other groups rules', async () => {
   const { callRules } = fake(request => {
-    if (request.group === 'references') throw coded('model_output_limit', false);
+    if (request.group === 'references') throw coded('upstream_timeout', false);
     return reply(RULES[request.group]);
   });
   const { sheet, failures } = await run(callRules);
-  assert.deepEqual(failures, [{ group: 'references', doc: 0, part: 0, code: 'model_output_limit', message: 'model_output_limit' }]);
+  assert.deepEqual(failures, [{ group: 'references', doc: 0, part: 0, code: 'upstream_timeout', message: 'upstream_timeout' }]);
   assert.deepEqual(categories(sheet), ['spelling', 'files']);
   assert.equal(validateSheet(sheet).ok, true);
 });
@@ -312,4 +312,80 @@ test('a rule filed under a category the document type does not offer is kept und
   ]);
   assert.equal(sheet.dropped, 1, 'an unknown category is still dropped');
   assert.equal(validateSheet(sheet).ok, true);
+});
+
+// ---- A part whose answer runs out of output room is read again in two halves ----
+
+// Paragraphs of invented requirements, each stating one rule a fake model "finds" by its number.
+const REQUIREMENTS = Array.from({ length: 24 }, (_, n) => `Requirement number ${n + 1} must be met by every author who submits.`);
+const BIG = REQUIREMENTS.join('\n\n');
+// A fake model that runs out of room above `limit` characters and otherwise reports, for the
+// spelling group only, one rule per requirement it was shown.
+function roomy(limit, { code = 'model_output_limit' } = {}) {
+  return fake(request => {
+    if (request.text.length > limit) throw coded(code, false);
+    if (request.group !== 'style') return reply([]);
+    return reply(REQUIREMENTS.filter(sentence => request.text.includes(sentence))
+      .map(sentence => ({ category: 'other', slot: null, statement: sentence, quote: sentence, mode: 'flag', params: {} })));
+  });
+}
+const runBig = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [BIG], callRules, ...options });
+
+test('splitInTwo cuts at the paragraph break nearest the middle, the second half starting a little before', () => {
+  const [first, second] = splitInTwo(BIG);
+  assert.ok(first.endsWith('\n\n') && !second.startsWith('\n'));
+  assert.ok(Math.abs(first.length - BIG.length / 2) < REQUIREMENTS[0].length + 4, 'near the middle');
+  assert.ok(first.length + second.length >= BIG.length, 'nothing is lost');
+  assert.ok(REQUIREMENTS.every(sentence => first.includes(sentence) || second.includes(sentence)));
+  assert.equal(splitInTwo('x'), null);
+  const prose = 'One sentence here. Another sentence there. A third, much longer sentence ends it.';
+  assert.deepEqual(splitInTwo(prose, { overlap: 0 }).map(half => half.trim()), ['One sentence here. Another sentence there.', 'A third, much longer sentence ends it.']);
+});
+
+test('a part that runs out of output room is read as two halves, and every rule is found', async () => {
+  const { calls, callRules } = roomy(BIG.length - 1);
+  const seen = [];
+  const { sheet, failures } = await runBig(callRules, { onProgress: progress => seen.push(progress) });
+  assert.deepEqual(failures, []);
+  assert.equal(sheet.rules.length, REQUIREMENTS.length);
+  // All three groups run out of room on the whole part: 3 whole calls and 6 halves.
+  assert.equal(calls.length, 9);
+  assert.equal(calls.filter(call => call.text === BIG).length, 3);
+  assert.deepEqual(seen.at(-1), { done: 9, total: 9 });
+});
+
+test('a half that runs out of room again is reported once and not split further', async () => {
+  const lengths = splitInTwo(BIG).map(half => half.length);
+  assert.notEqual(lengths[0], lengths[1]);
+  // Room for the shorter half only.
+  const { calls, callRules } = roomy(Math.min(...lengths));
+  const longer = lengths[0] > lengths[1] ? 0 : 1;
+  const { sheet, failures } = await runBig(callRules);
+  assert.equal(calls.length, 9, 'three whole parts and two halves each, no quarters');
+  assert.deepEqual(failures.map(({ group, part, half, code }) => ({ group, part, half, code })),
+    ['style', 'references', 'structure'].map(group => ({ group, part: 0, half: longer, code: 'model_output_limit' })));
+  assert.ok(sheet.rules.length > 0 && sheet.rules.length < REQUIREMENTS.length, 'the half that fitted still gives its rules');
+});
+
+test('other failure codes are not split', async () => {
+  const { calls, callRules } = roomy(BIG.length - 1, { code: 'upstream_timeout' });
+  const { failures } = await runBig(callRules);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(failures.map(failure => [failure.code, failure.half]), [['upstream_timeout', undefined], ['upstream_timeout', undefined], ['upstream_timeout', undefined]]);
+});
+
+test('only reads the parts and halves named, and nothing else', async () => {
+  const first = await runBig(roomy(Math.min(...splitInTwo(BIG).map(half => half.length))).callRules);
+  const failed = first.failures.filter(failure => failure.group === 'style');
+  assert.equal(failed.length, 1);
+  const { calls, callRules } = roomy(BIG.length);
+  const { sheet, failures } = await runBig(callRules, { only: failed });
+  assert.deepEqual(failures, []);
+  assert.deepEqual(calls.map(call => call.group), ['style'], 'one call: the failed half alone');
+  assert.equal(calls[0].text, splitInTwo(BIG)[failed[0].half]);
+  assert.ok(sheet.rules.length > 0);
+  // A whole-part failure in only reads the whole part.
+  const again = roomy(BIG.length);
+  await runBig(again.callRules, { only: [{ group: 'references', doc: 0, part: 0, code: 'upstream_timeout' }] });
+  assert.deepEqual(again.calls.map(call => [call.group, call.text === BIG]), [['references', true]]);
 });

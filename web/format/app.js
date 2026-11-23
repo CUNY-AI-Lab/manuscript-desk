@@ -170,7 +170,8 @@ export function failureLines(failures, guidelines) {
   return failures.map(failure => {
     const name = guidelines[failure.doc]?.name ?? 'the guidelines';
     const count = partCount(failure.doc);
-    const where = count > 1 ? `${name}, part ${failure.part + 1} of ${count}` : name;
+    const half = failure.half === 0 ? 'the first half of ' : failure.half === 1 ? 'the second half of ' : '';
+    const where = count > 1 ? `${half}${name}, part ${failure.part + 1} of ${count}` : `${half}${name}`;
     return `${capitalise(GROUP_LABELS[failure.group] ?? 'some rules')} in ${where}: ${failureSentence(failure)}`;
   });
 }
@@ -192,6 +193,7 @@ export const savedState = state => ({ docType: state.docType, guidelines: state.
 const isFailure = (entry, guidelines) => isObject(entry) && GROUPS.includes(entry.group)
   && Number.isInteger(entry.doc) && entry.doc >= 0 && entry.doc < guidelines.length
   && Number.isInteger(entry.part) && entry.part >= 0
+  && (entry.half === undefined || entry.half === 0 || entry.half === 1)
   && typeof entry.code === 'string' && entry.code.length > 0 && entry.code.length <= 100;
 
 // The work saved in this browser, checked as untrusted: anything malformed is left out.
@@ -203,8 +205,8 @@ export function restoredState(saved) {
     : [];
   const docType = sheet.ok ? sheet.sheet.docType : DOC_TYPES.includes(saved?.docType) ? saved.docType : null;
   const failures = isObject(saved) && Array.isArray(saved.failures)
-    ? saved.failures.filter(entry => isFailure(entry, guidelines)).map(({ group, doc, part, code, message }) => ({
-      group, doc, part, code, ...(typeof message === 'string' && message ? { message: message.slice(0, 300) } : {}),
+    ? saved.failures.filter(entry => isFailure(entry, guidelines)).map(({ group, doc, part, half, code, message }) => ({
+      group, doc, part, ...(half === undefined ? {} : { half }), code, ...(typeof message === 'string' && message ? { message: message.slice(0, 300) } : {}),
     }))
     : [];
   return { docType, guidelines, sheet: sheet.ok ? sheet.sheet : null, failures, loadedFromFile: sheet.ok && saved.loadedFromFile === true };
@@ -396,7 +398,6 @@ function start() {
 
   const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal })
     .catch(error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, message: error.message } : error; });
-  const partKey = (group, text) => `${group}\u0000${text}`;
 
   async function read({ retry = false } = {}) {
     const model = $('model-select').value;
@@ -409,9 +410,8 @@ function start() {
     if (problems.length) return;
     if (!retry && state.sheet?.rules.length && !confirm('Reading the guidelines again replaces the rule sheet below, with any changes you made. Continue?')) return;
     const texts = state.guidelines.map(entry => entry.text);
-    // A second try asks only for the parts that failed; the others answer at once with no rules.
-    const failed = retry ? new Set(state.failures.map(({ group, doc, part }) => partKey(group, splitGuidelines(texts[doc])[part]))) : null;
-    const calls = args => (failed && !failed.has(partKey(args.group, args.text)) ? Promise.resolve({ content: '{"rules":[]}' }) : callRules(args));
+    // A second try asks only for the parts (or halves of parts) that failed.
+    const only = retry ? state.failures.map(({ group, doc, part, half }) => ({ group, doc, part, ...(half === undefined ? {} : { half }) })) : undefined;
     const controller = new AbortController();
     state.running = controller;
     state.editingId = null;
@@ -420,7 +420,7 @@ function start() {
     render();
     try {
       const result = await extractRuleSheet({
-        docType: state.docType, model, guidelines: texts, callRules: calls, signal: controller.signal,
+        docType: state.docType, model, guidelines: texts, callRules, only, signal: controller.signal,
         onProgress: ({ done, total }) => {
           $('progress').max = total;
           $('progress').value = done;

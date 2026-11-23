@@ -96,11 +96,15 @@ test('the failure notice names each failed part in plain words', () => {
     { group: 'references', doc: 0, part: 0, code: 'model_output_limit' },
     { group: 'style', doc: 1, part: 1, code: 'quota_exceeded' },
     { group: 'structure', doc: 1, part: 0, code: 'odd_code', message: 'The Worker said this.' },
+    { group: 'references', doc: 1, part: 1, half: 0, code: 'model_output_limit' },
+    { group: 'style', doc: 0, part: 0, half: 1, code: 'model_output_limit' },
   ], guidelines);
   assert.deepEqual(lines, [
     'Citations, references and notes in press.docx: The model ran out of room on this part. Choose another model and try again.',
     'Spelling, punctuation and style in series.pdf, part 2 of 2: Your model allowance is used up, so this part was not read.',
     'Structure, layout and other requirements in series.pdf, part 1 of 2: The Worker said this.',
+    'Citations, references and notes in the first half of series.pdf, part 2 of 2: The model ran out of room on this part. Choose another model and try again.',
+    'Spelling, punctuation and style in the second half of press.docx: The model ran out of room on this part. Choose another model and try again.',
   ]);
   for (const line of lines) assert.doesNotMatch(line, JARGON);
 });
@@ -125,9 +129,12 @@ test('restoring keeps the loaded mark and the failures that still fit the guidel
     { group: 'style', doc: 0, part: -1, code: 'network_error' },
     { group: 'style', doc: 0, part: 0, code: '' },
     { group: 'style', doc: 0, part: 0, code: 'quota_exceeded', message: 'm'.repeat(400) },
+    { group: 'style', doc: 0, part: 0, half: 1, code: 'model_output_limit' },
+    { group: 'style', doc: 0, part: 0, half: 2, code: 'model_output_limit' },
     'junk',
   ] });
-  assert.deepEqual(restored.failures, [failure, { group: 'references', doc: 0, part: 0, code: 'network_error' }, { group: 'style', doc: 0, part: 0, code: 'quota_exceeded', message: 'm'.repeat(300) }]);
+  assert.deepEqual(restored.failures, [failure, { group: 'references', doc: 0, part: 0, code: 'network_error' }, { group: 'style', doc: 0, part: 0, code: 'quota_exceeded', message: 'm'.repeat(300) },
+    { group: 'style', doc: 0, part: 0, half: 1, code: 'model_output_limit' }]);
   assert.equal(restored.loadedFromFile, false, 'only true marks a sheet as loaded');
   assert.equal(restoredState({ docType: 'article', guidelines: [], sheet: null, loadedFromFile: true }).loadedFromFile, false, 'no sheet, no mark');
   assert.deepEqual(restoredState(null), { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false });

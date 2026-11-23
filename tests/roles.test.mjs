@@ -143,11 +143,11 @@ test('labelRoles retries once after an unreadable reply or a retryable rejection
   });
   assert.equal(attempts.get(0), 2);
   assert.equal(attempts.get(25), 4, 'twice in the first pass, twice in the second');
-  assert.equal(attempts.get(50), 2, 'once in each pass, never retried without the retry mark');
+  assert.equal(attempts.get(50), 2, 'once whole and once as the first half, never retried without the retry mark, not asked in the second pass');
   assert.equal(attempts.get(76), 1, 'the paragraphs a reply left out are asked again on their own');
   assert.equal(roles[0], 'title-block');
   assert.equal(roles[80], 'body');
-  assert.deepEqual(failures.map(failure => [failure.passage, failure.code, failure.unlabelled.length]), [[1, 'rate_limited', 20], [2, 'model_output_limit', 20]]);
+  assert.deepEqual(failures.map(failure => [failure.passage, failure.code, failure.unlabelled.length]), [[1, 'rate_limited', 20], [2, 'model_output_limit', 10]], 'the second half of passage 2 was labelled');
   assert.equal(failures[0].message, 'rate_limited');
   assert.equal(roles[25], undefined);
 });
@@ -204,4 +204,38 @@ test('labelRoles checks its arguments', async () => {
   await assert.rejects(labelRoles({ model: 'm', callRoles: async () => ({}) }), /paragraph list/);
   await assert.rejects(labelRoles({ paragraphs: [], model: 'm' }), /callRoles/);
   assert.deepEqual(await labelRoles({ paragraphs: [], model: 'm', callRoles: async () => assert.fail('no call') }), { roles: {}, failures: [] });
+});
+
+test('a passage that runs out of output room is asked as two halves; a half that fails again is reported once', async () => {
+  const paragraphs = manuscript(100);
+  const sizes = [];
+  // Room for at most 12 paragraphs to label.
+  const callRoles = limit => async ({ passage }) => {
+    const indices = labelLines(passage);
+    sizes.push(indices.length);
+    if (indices.length > limit) throw coded('model_output_limit', false);
+    return answerAll(passage);
+  };
+  const options = { paragraphs, model: 'm', passageOptions: { maxParagraphs: 20, overlapShare: 0 } };
+  const progress = [];
+  const whole = await labelRoles({ ...options, callRoles: callRoles(12), onProgress: event => progress.push(event) });
+  assert.deepEqual(whole.failures, []);
+  assert.equal(Object.keys(whole.roles).length, 80, 'every paragraph with text is labelled');
+  // Four passages of 20, each failing whole and then read as two halves of 10: 12 calls.
+  const tally = list => [...list].sort((a, b) => a - b).join(',');
+  assert.equal(tally(sizes), '10,10,10,10,10,10,10,10,20,20,20,20');
+  assert.deepEqual(progress.at(-1), { done: 12, total: 12 });
+
+  sizes.length = 0;
+  // Room for 9: every half of 10 fails again; each passage is reported once, and nothing is split further or asked again.
+  const tight = await labelRoles({ ...options, callRoles: callRoles(9) });
+  assert.equal(tally(sizes), '10,10,10,10,10,10,10,10,20,20,20,20');
+  assert.deepEqual(tight.failures.map(failure => [failure.passage, failure.code, failure.unlabelled.length]),
+    [[0, 'model_output_limit', 20], [1, 'model_output_limit', 20], [2, 'model_output_limit', 20], [3, 'model_output_limit', 20]]);
+
+  sizes.length = 0;
+  // Another failure code is not split.
+  const other = await labelRoles({ ...options, callRoles: async ({ passage }) => { sizes.push(labelLines(passage).length); throw coded('upstream_timeout', false); } });
+  assert.deepEqual(sizes.slice(0, 4), [20, 20, 20, 20]);
+  assert.ok(other.failures.every(failure => failure.code === 'upstream_timeout'));
 });
