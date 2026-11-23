@@ -424,7 +424,7 @@ function start() {
         onProgress: ({ done, total }) => {
           $('progress').max = total;
           $('progress').value = done;
-          $('progress-text').textContent = `Reading the guidelines: ${done} of ${plural(total, 'part', 'parts')} done.`;
+          $('progress-text').textContent = `Reading the guidelines: ${done} of ${plural(total, 'reading', 'readings')} done.`;
         },
       });
       const next = afterRead(state, result, { retry });

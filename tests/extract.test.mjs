@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractRuleSheet } from '../lib/rules/extract.js';
+import { READINGS, extractRuleSheet } from '../lib/rules/extract.js';
 import { splitGuidelines, splitInTwo } from '../lib/rules/chunk.js';
 import { GROUPS, MAX_RULES, validateSheet } from '../lib/rules/schema.js';
 
@@ -32,7 +32,8 @@ function fake(answer = request => reply(RULES[request.group])) {
   return { calls, callRules };
 }
 
-const run = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, ...options });
+// Most tests read each part once; the two-reading default is tested on its own below.
+const run = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, readings: 1, ...options });
 const categories = sheet => sheet.rules.map(rule => rule.category);
 
 test('calls each of the three groups once for a one-part document', async () => {
@@ -329,7 +330,7 @@ function roomy(limit, { code = 'model_output_limit' } = {}) {
       .map(sentence => ({ category: 'other', slot: null, statement: sentence, quote: sentence, mode: 'flag', params: {} })));
   });
 }
-const runBig = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [BIG], callRules, ...options });
+const runBig = (callRules, options = {}) => extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [BIG], callRules, readings: 1, ...options });
 
 test('splitInTwo cuts at the paragraph break nearest the middle, the second half starting a little before', () => {
   const [first, second] = splitInTwo(BIG);
@@ -388,4 +389,56 @@ test('only reads the parts and halves named, and nothing else', async () => {
   const again = roomy(BIG.length);
   await runBig(again.callRules, { only: [{ group: 'references', doc: 0, part: 0, code: 'upstream_timeout' }] });
   assert.deepEqual(again.calls.map(call => [call.group, call.text === BIG]), [['references', true]]);
+});
+
+// ---- Each part is read twice; the second reading adds only settings ----
+
+const SPELLING = RULES.style[0];
+const FOOTNOTES = RULES.references[0];
+const PLAIN = RULES.structure[0];
+
+test('by default each part is read twice', async () => {
+  assert.equal(READINGS, 2);
+  const { calls, callRules } = fake();
+  const seen = [];
+  const { sheet, failures } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, onProgress: event => seen.push(event) });
+  assert.equal(calls.length, 6);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(categories(sheet), ['spelling', 'notes', 'files'], 'the same answer twice gives each rule once');
+  assert.deepEqual(seen.at(-1), { done: 6, total: 6 });
+  await assert.rejects(extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G0], callRules, readings: 3 }), /readings/);
+});
+
+test('a setting only the second reading found is kept; its plain rules are not added again', async () => {
+  const { callRules } = fake((request, attempt) => {
+    if (request.group === 'style') return reply(attempt === 1 ? [] : [SPELLING, { ...PLAIN, category: 'spelling', quote: 'following Merriam-Webster', statement: 'A plain rule only the second reading gave.' }]);
+    if (request.group === 'structure') return reply(attempt === 1 ? [PLAIN] : [{ ...PLAIN, statement: 'Different wording of the same rule.' }, { ...SPELLING, quote: 'not in the guidelines at all' }]);
+    return reply([]);
+  });
+  const { sheet } = await run(callRules, { readings: 2 });
+  assert.deepEqual(sheet.rules.map(rule => [rule.slot, rule.statement]), [['spelling.variety', 'Use US spelling.'], [null, 'Submit a Word file.']]);
+  assert.equal(sheet.dropped, 0, 'what the second reading could not confirm is not counted as left out');
+});
+
+test('two readings that fill a setting differently make a conflict', async () => {
+  const { callRules } = fake((request, attempt) => (request.group === 'references'
+    ? reply([attempt === 1 ? FOOTNOTES : { ...FOOTNOTES, params: { kind: 'endnotes' } }]) : reply([])));
+  const { sheet } = await run(callRules, { readings: 2 });
+  assert.deepEqual(sheet.rules.map(rule => [rule.params.kind, rule.conflict]), [['footnotes', true], ['endnotes', true]]);
+});
+
+test('when one reading fails the other gives the rules and no failure is reported; when both fail, the first one\'s failure is', async () => {
+  const once = fake((request, attempt) => {
+    if (request.group === 'structure' && attempt === 1) throw coded('upstream_timeout', false);
+    return reply(RULES[request.group]);
+  });
+  const first = await run(once.callRules, { readings: 2 });
+  assert.deepEqual(first.failures, []);
+  assert.deepEqual(categories(first.sheet), ['spelling', 'notes', 'files']);
+  const both = fake(request => {
+    if (request.group === 'structure') throw coded('upstream_timeout', false);
+    return reply(RULES[request.group]);
+  });
+  const second = await run(both.callRules, { readings: 2 });
+  assert.deepEqual(second.failures, [{ group: 'structure', doc: 0, part: 0, code: 'upstream_timeout', message: 'upstream_timeout' }]);
 });

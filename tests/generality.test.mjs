@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { MAX_TEXT_FILE_BYTES, checkExpected, createCallRules, htmlToText, passes, readCaseFile, rulesPayload, scoreSheet } from '../scripts/generality.mjs';
+import { MAX_TEXT_FILE_BYTES, checkExpected, createCallRules, htmlToText, passes, readCaseFile, rulesPayload, scoreSheet, slotFills } from '../scripts/generality.mjs';
 import { createHandler } from '../server/worker.js';
 import { ORIGIN, env, signed } from './helpers.mjs';
 
@@ -187,4 +187,21 @@ test('callRules counts the tokens of a reply that ran out of room', async () => 
   const callRules = createCallRules({ key: KEY, rows: new Map(), usage, fetchImpl: async () => Response.json(chat('{"rules":[', { finish: 'length', usage: { prompt_tokens: 500, completion_tokens: 6000 } })) });
   await assert.rejects(callRules(REQUEST), { code: 'model_output_limit' });
   assert.deepEqual(usage, { prompt: 500, completion: 6000, calls: 1 });
+});
+
+test('slotFills counts the runs that filled each setting, with values, and hides text as labels', () => {
+  const rule = (slot, params) => ({ slot, params });
+  const sheets = [
+    { rules: [rule('notes.restart', { per: 'chapter' }), rule('figures.markers', { example: 'A private example 1.1' }), rule(null, {})] },
+    { rules: [rule('notes.restart', { per: 'chapter' }), rule('figures.markers', { example: 'Another private example' }), rule('keywords.count', { min: 6, max: 10 })] },
+    { rules: [rule('notes.restart', { per: 'chapter' }), rule('notes.restart', { per: 'none' })] },
+    null,
+  ];
+  const rows = slotFills(sheets);
+  assert.deepEqual(rows, [
+    { slot: 'notes.restart', filled: 3, runs: 4, values: ['per=chapter x2', 'per=chapter | per=none x1'] },
+    { slot: 'figures.markers', filled: 2, runs: 4, values: ['example=text A x1', 'example=text B x1'] },
+    { slot: 'keywords.count', filled: 1, runs: 4, values: ['max=10 min=6 x1'] },
+  ]);
+  assert.ok(!JSON.stringify(rows).includes('private'), 'no text value is shown');
 });

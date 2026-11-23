@@ -3,7 +3,10 @@
 // guidelines kept outside the repository, calling the CAIL Gateway with the caller's own key, and
 // scores each sheet against the rules a case's expected.json says it must contain.
 //
-//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]]
+//   CAIL_API_KEY=... npm run generality -- --models a,b,c [--only <folder>] [--all [--doc-type <type>]] [--repeat <n>]
+//
+// With --repeat, each case is read n times and, per case, a table shows for each setting of the
+// rule sheet in how many runs it was filled and with which values (text values only as labels).
 //
 // Results go to stdout only: counts, timings, cost and the names of missed expected rules. It never
 // prints or writes guideline text, extracted quotations or rule statements, and never prints the key.
@@ -31,14 +34,15 @@ export const MAX_TEXT_FILE_BYTES = 5000000;
 const DEFAULT_DOC_TYPE = 'monograph';
 const DEFAULT_FOLDER = fileURLToPath(new URL('../../manuscript-desk-guidelines', import.meta.url));
 
-const USAGE = `Usage: npm run generality -- --models <id>[,<id>...] [--only <folder>] [--all] [--doc-type <${DOC_TYPES.join('|')}>]
+const USAGE = `Usage: npm run generality -- --models <id>[,<id>...] [--only <folder>] [--all] [--doc-type <${DOC_TYPES.join('|')}>] [--repeat <n>]
 
 Reads the guidelines folder named by MANUSCRIPT_DESK_GUIDELINES (default ../manuscript-desk-guidelines)
 and calls the CAIL Gateway with the key in CAIL_API_KEY, which pays for every call.
   --models    model ids to measure, separated by commas
   --only      run only the cases in this subfolder
   --all       also run every other supported file as its own unscored case
-  --doc-type  document type of those unscored cases (default ${DEFAULT_DOC_TYPE})`;
+  --doc-type  document type of those unscored cases (default ${DEFAULT_DOC_TYPE})
+  --repeat    read each case this many times and tabulate which settings each run filled`;
 
 // ---------------------------------------------------------------------------------------------
 // Scoring
@@ -72,6 +76,47 @@ export function passes(results) {
   const found = scored.reduce((sum, result) => sum + result.found, 0);
   const of = scored.reduce((sum, result) => sum + result.of, 0);
   return found * 10 >= of * 9 && scored.every(result => result.found * 5 >= result.of * 4);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stability
+
+/**
+ * For each setting (slot) any run filled: in how many of the runs it was filled, and how often each
+ * value occurred, as "value xN". A slot holding rules that disagree counts its values joined by " | ".
+ * Text values (a font name, a marker's example) are never shown: each distinct text is a label,
+ * "text A", "text B", in order of first appearance, so the table carries no guideline text.
+ * @param {Array<{ rules: Array<{ slot: string | null, params: object }> } | null>} sheets one per run
+ * @returns {Array<{ slot: string, filled: number, runs: number, values: string[] }>}
+ */
+export function slotFills(sheets) {
+  const texts = new Map();
+  const label = value => {
+    if (typeof value !== 'string' || /^[a-z%-]{1,20}$/.test(value)) return JSON.stringify(value)?.replace(/^"|"$/g, '') ?? String(value);
+    if (!texts.has(value)) texts.set(value, `text ${String.fromCharCode(65 + (texts.size % 26))}${texts.size >= 26 ? Math.floor(texts.size / 26) : ''}`);
+    return texts.get(value);
+  };
+  const bySlot = new Map();
+  sheets.forEach(sheet => {
+    const seen = new Map();
+    for (const rule of sheet?.rules ?? []) {
+      if (typeof rule.slot !== 'string') continue;
+      const words = Object.keys(rule.params ?? {}).sort().map(name => `${name}=${label(rule.params[name])}`).join(' ');
+      if (!seen.has(rule.slot)) seen.set(rule.slot, new Set());
+      seen.get(rule.slot).add(words);
+    }
+    for (const [slot, values] of seen) {
+      if (!bySlot.has(slot)) bySlot.set(slot, { filled: 0, values: new Map() });
+      const entry = bySlot.get(slot);
+      entry.filled += 1;
+      const value = [...values].sort().join(' | ');
+      entry.values.set(value, (entry.values.get(value) ?? 0) + 1);
+    }
+  });
+  return [...bySlot].sort((a, b) => b[1].filled - a[1].filled || a[0].localeCompare(b[0])).map(([slot, { filled, values }]) => ({
+    slot, filled, runs: sheets.length,
+    values: [...values].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, count]) => `${value} x${count}`),
+  }));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -385,7 +430,7 @@ export function table(header, rows) {
 const percent = (found, of) => (of > 0 ? `${((found / of) * 100).toFixed(1)}%` : '-');
 const tally = codes => Object.entries(codes.reduce((counts, code) => ({ ...counts, [code]: (counts[code] ?? 0) + 1 }), {})).map(([code, count]) => `${code} x${count}`).join(', ');
 
-async function measure(model, cases, { key, rows, log }) {
+async function measure(model, cases, { key, rows, log, repeat = 1 }) {
   const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
   const callRules = createCallRules({ key, rows: rows ?? new Map(), usage });
   const results = [];
@@ -394,13 +439,16 @@ async function measure(model, cases, { key, rows, log }) {
       results.push({ entry, skipped: true });
       continue;
     }
-    log(`${model}: reading ${entry.name}`);
-    const start = performance.now();
-    try {
-      const { sheet, failures } = await extractRuleSheet({ docType: entry.docType, model, guidelines: entry.texts, callRules });
-      results.push({ entry, sheet, failures, seconds: (performance.now() - start) / 1000 });
-    } catch (error) {
-      results.push({ entry, error: typeof error?.code === 'string' ? error.code : (error?.name ?? 'error'), seconds: (performance.now() - start) / 1000 });
+    for (let run = 1; run <= repeat; run += 1) {
+      const named = repeat > 1 ? { ...entry, run } : entry;
+      log(`${model}: reading ${entry.name}${repeat > 1 ? ` (run ${run} of ${repeat})` : ''}`);
+      const start = performance.now();
+      try {
+        const { sheet, failures } = await extractRuleSheet({ docType: entry.docType, model, guidelines: entry.texts, callRules });
+        results.push({ entry: named, sheet, failures, seconds: (performance.now() - start) / 1000 });
+      } catch (error) {
+        results.push({ entry: named, error: typeof error?.code === 'string' ? error.code : (error?.name ?? 'error'), seconds: (performance.now() - start) / 1000 });
+      }
     }
   }
   return { usage, results };
@@ -418,22 +466,23 @@ function report(model, { usage, results }, row, out) {
     const score = entry.expected ? (result.sheet ? scoreSheet(result.sheet, entry.expected) : { found: 0, of: wanted.length, missed: wanted.map(rule => rule.name) }) : null;
     if (score) scores.push(score);
     const found = score ? `${score.found}/${score.of}` : '-';
+    const name = entry.run ? `${entry.name} (run ${entry.run})` : entry.name;
     if (result.skipped) {
-      rowsOut.push([entry.name, '-', '-', found, '-', 'skipped']);
+      rowsOut.push([name, '-', '-', found, '-', 'skipped']);
       notes.push(`${entry.name}: skipped, no readable file`);
     } else if (result.error) {
-      rowsOut.push([entry.name, '-', '-', found, '-', result.seconds.toFixed(1)]);
-      notes.push(`${entry.name}: the run stopped (${result.error})`);
+      rowsOut.push([name, '-', '-', found, '-', result.seconds.toFixed(1)]);
+      notes.push(`${name}: the run stopped (${result.error})`);
       totals.seconds += result.seconds;
     } else {
-      rowsOut.push([entry.name, result.sheet.rules.length, result.sheet.dropped, found, result.failures.length, result.seconds.toFixed(1)]);
+      rowsOut.push([name, result.sheet.rules.length, result.sheet.dropped, found, result.failures.length, result.seconds.toFixed(1)]);
       totals.kept += result.sheet.rules.length;
       totals.dropped += result.sheet.dropped;
       totals.failures += result.failures.length;
       totals.seconds += result.seconds;
-      if (result.failures.length) notes.push(`${entry.name}: failed calls: ${tally(result.failures.map(failure => failure.code))}`);
+      if (result.failures.length) notes.push(`${name}: failed calls: ${tally(result.failures.map(failure => failure.code))}`);
     }
-    if (score?.missed.length) notes.push(`${entry.name}: missed ${score.missed.join('; ')}`);
+    if (score?.missed.length) notes.push(`${name}: missed ${score.missed.join('; ')}`);
   }
   const found = scores.reduce((sum, score) => sum + score.found, 0);
   const of = scores.reduce((sum, score) => sum + score.of, 0);
@@ -448,6 +497,12 @@ function report(model, { usage, results }, row, out) {
   const lowest = scores.filter(score => score.of > 0).reduce((low, score) => Math.min(low, score.found / score.of), Infinity);
   out(`Result: ${verdict ? 'PASS' : 'FAIL'}${of ? ` (${percent(found, of)} found overall, lowest case ${(lowest * 100).toFixed(1)}%)` : ' (no scored cases)'}`);
   for (const note of notes) out(`  ${note}`);
+  const runsByCase = new Map();
+  for (const result of results) if (result.entry.run) runsByCase.set(result.entry.name, [...(runsByCase.get(result.entry.name) ?? []), result.sheet ?? null]);
+  for (const [name, sheets] of runsByCase) {
+    out(`\nSettings filled in ${sheets.length} runs of ${name}:`);
+    out(table(['Setting', 'Runs filled', 'Values'], slotFills(sheets).map(row => [row.slot, `${row.filled}/${row.runs}`, row.values.join('; ')])));
+  }
   return verdict;
 }
 
@@ -457,7 +512,7 @@ function report(model, { usage, results }, row, out) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { models: { type: 'string' }, only: { type: 'string' }, all: { type: 'boolean' }, 'doc-type': { type: 'string' }, repeat: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -469,6 +524,11 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const models = (values.models ?? '').split(',').map(model => model.trim()).filter(Boolean);
   if (models.length === 0) {
     err(`Name at least one model with --models.\n\n${USAGE}`);
+    return 1;
+  }
+  const repeat = values.repeat === undefined ? 1 : Number(values.repeat);
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) {
+    err('--repeat must be a whole number from 1 to 20.');
     return 1;
   }
   const docType = values['doc-type'] ?? DEFAULT_DOC_TYPE;
@@ -517,7 +577,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
   let allPass = true;
   for (const model of models) {
     if (rows && !rows.has(model)) out(`\n${model} is not in the model catalog: calls go without its model controls and cost is unknown.`);
-    const measured = await measure(model, cases, { key, rows, log: err });
+    const measured = await measure(model, cases, { key, rows, log: err, repeat });
     allPass = report(model, measured, rows?.get(model), out) && allPass;
   }
   return allPass ? 0 : 1;

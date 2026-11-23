@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CATEGORIES, DOC_TYPES, SLOTS, categoriesFor } from '../lib/rules/schema.js';
+import { CATEGORIES, DOC_TYPES, SLOTS, SLOT_USES, categoriesFor } from '../lib/rules/schema.js';
 import { rulesPrompt } from '../server/prompts.js';
 
 // The category lines of a prompt, as [id, label] pairs.
@@ -125,4 +125,13 @@ test('refuses an unknown document type or group', () => {
   assert.throws(() => rulesPrompt({ docType: 'novel', group: 'style' }), /document type/);
   assert.throws(() => rulesPrompt({ docType: 'article', group: 'layout' }), /group/);
   assert.throws(() => rulesPrompt({ docType: 'article', group: 'constructor' }), /group/);
+});
+
+test('every slot has a line saying when it applies, and the prompt of its group gives it', () => {
+  assert.deepEqual(Object.keys(SLOT_USES).sort(), Object.keys(SLOTS).sort());
+  for (const [id, spec] of Object.entries(SLOTS)) {
+    const docType = DOC_TYPES.find(type => categoriesFor(type).some(entry => entry.id === spec.category));
+    const group = CATEGORIES.find(entry => entry.id === spec.category).group;
+    assert.ok(rulesPrompt({ docType, group }).includes(`"${id}" in "${spec.category}"`) && rulesPrompt({ docType, group }).includes(`Use it for ${SLOT_USES[id]}.`), id);
+  }
 });
