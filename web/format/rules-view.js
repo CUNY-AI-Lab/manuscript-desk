@@ -170,17 +170,38 @@ function ruleRow(rule, view, actions) {
   return row;
 }
 
-function conflictBlock(rules, actions) {
+// The sheet's rules as the page draws them, each exactly once: rules that disagree, grouped by
+// setting (only rules with a setting can be marked so); then the rest under their category headings,
+// in table order with "Other requirements" last. A rule whose category the sheet's document type does
+// not offer is shown under "Other requirements", so no rule in the sheet is ever out of sight.
+export function groupRules(sheet) {
+  const rules = Array.isArray(sheet?.rules) ? sheet.rules : [];
+  const categories = orderedCategories(sheet?.docType);
+  const offered = new Set(categories.map(entry => entry.id));
   const bySlot = new Map();
-  for (const rule of rules) bySlot.set(rule.slot, [...(bySlot.get(rule.slot) ?? []), rule]);
+  const byCategory = new Map();
+  for (const rule of rules) {
+    if (rule.conflict === true && typeof rule.slot === 'string') bySlot.set(rule.slot, [...(bySlot.get(rule.slot) ?? []), rule]);
+    else {
+      const category = offered.has(rule.category) ? rule.category : 'other';
+      byCategory.set(category, [...(byCategory.get(category) ?? []), rule]);
+    }
+  }
+  return {
+    conflicts: [...bySlot.entries()].map(([slot, group]) => ({ slot, rules: group })),
+    sections: categories.filter(entry => byCategory.has(entry.id)).map(category => ({ category, rules: byCategory.get(category.id) })),
+  };
+}
+
+function conflictBlock(conflicts, actions) {
   return el('section', { className: 'conflicts', 'aria-labelledby': 'conflicts-title' },
     el('h3', { id: 'conflicts-title', text: 'The guidelines say two different things' }),
     el('p', { className: 'help', text: 'Choose the rule to keep in each case. The others are removed.' }),
-    ...[...bySlot.entries()].map(([slot, group]) => {
-      const title = `conflict-${slot.replace(/[^a-z0-9]+/g, '-')}`;
+    ...conflicts.map(({ slot, rules }) => {
+      const title = `conflict-${String(slot).replace(/[^a-z0-9]+/g, '-')}`;
       return el('div', { className: 'conflict', role: 'group', 'aria-labelledby': title },
-        el('h4', { id: title, text: SETTINGS[slot] ? Object.values(SETTINGS[slot])[0][0] : slot }),
-        el('ul', { className: 'rule-list' }, ...group.map(rule => el('li', { className: 'rule' },
+        el('h4', { id: title, text: SETTINGS[slot] ? Object.values(SETTINGS[slot])[0][0] : 'Settings that disagree' }),
+        el('ul', { className: 'rule-list' }, ...rules.map(rule => el('li', { className: 'rule' },
           el('p', { className: 'rule-statement', id: `rule-${rule.id}-statement`, text: rule.statement }),
           sourceLine(rule.source),
           el('button', { type: 'button', className: 'button secondary', text: 'Keep this rule', 'aria-describedby': `rule-${rule.id}-statement`, onclick: () => actions.keep(rule.id) })))));
@@ -189,16 +210,12 @@ function conflictBlock(rules, actions) {
 
 // Fills `container` with the sheet's rules. view: { sheet, editingId }.
 export function renderRules(container, view, actions) {
-  const rules = view.sheet?.rules ?? [];
-  const conflicts = rules.filter(rule => rule.conflict);
-  const sections = orderedCategories(view.sheet?.docType).map(category => {
-    const own = rules.filter(rule => !rule.conflict && rule.category === category.id);
-    if (own.length === 0) return null;
-    return el('section', { className: 'category', 'aria-labelledby': `category-${category.id}` },
+  const { conflicts, sections } = groupRules(view.sheet);
+  container.replaceChildren(
+    ...(conflicts.length ? [conflictBlock(conflicts, actions)] : []),
+    ...sections.map(({ category, rules }) => el('section', { className: 'category', 'aria-labelledby': `category-${category.id}` },
       el('h3', { id: `category-${category.id}`, text: category.label }),
-      el('ul', { className: 'rule-list' }, ...own.map(rule => ruleRow(rule, view, actions))));
-  });
-  container.replaceChildren(...(conflicts.length ? [conflictBlock(conflicts, actions)] : []), ...sections.filter(Boolean));
+      el('ul', { className: 'rule-list' }, ...rules.map(rule => ruleRow(rule, view, actions))))));
 }
 
 // The "Add a rule" form for the given document type. The new rule has no settings, so it is a

@@ -266,3 +266,18 @@ test('rejects arguments a caller should never pass', async () => {
   await assert.rejects(run('not a function'), Error);
   assert.equal(calls.length, 0);
 });
+
+test('a rule filed under a category the document type does not offer is kept under other, never fixed', async () => {
+  const { callRules } = fake(request => reply(request.group === 'structure' ? [
+    { category: 'anonymization', slot: 'anonymize', statement: 'Remove your name from the manuscript.', quote: 'Submit the manuscript as a Word file', mode: 'fix', params: { required: true } },
+    { category: 'abstract-keywords', slot: null, statement: 'Write an abstract.', quote: 'with figures supplied as separate files', mode: 'supply', params: {} },
+    { category: 'no-such-category', slot: null, statement: 'Unknown.', quote: 'Please use double quotation marks', mode: 'flag', params: {} },
+  ] : []));
+  const { sheet } = await run(callRules, { docType: 'monograph' });
+  assert.deepEqual(sheet.rules.map(rule => [rule.category, rule.slot, rule.mode, rule.params, rule.statement]), [
+    ['other', null, 'flag', {}, 'Remove your name from the manuscript.'],
+    ['other', null, 'supply', {}, 'Write an abstract.'],
+  ]);
+  assert.equal(sheet.dropped, 1, 'an unknown category is still dropped');
+  assert.equal(validateSheet(sheet).ok, true);
+});

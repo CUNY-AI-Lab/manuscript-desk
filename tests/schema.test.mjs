@@ -149,6 +149,8 @@ test('accepts conflict only as exactly true', () => {
   assert.equal('conflict' in validateRule(slotted()).rule, false);
   rejects({ ...slotted(), conflict: false }, 'conflict');
   rejects({ ...slotted(), conflict: 'true' }, 'conflict');
+  // Only rules with a setting can disagree with each other.
+  rejects({ ...slotless(), conflict: true }, 'conflict: needs a slot');
 });
 
 test('rejects bad ids and statements', () => {

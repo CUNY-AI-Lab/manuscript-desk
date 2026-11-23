@@ -155,6 +155,23 @@ try {
   assert.equal(await page.getByLabel('Monograph').isChecked(), true);
   log('the downloaded sheet loads back: the rule is still off, Monograph chosen');
 
+  // A rule filed under a category a monograph does not have is shown under "Other requirements".
+  const stray = { ...file, rules: [...file.rules, { id: 'anonymization-1', category: 'anonymization', slot: 'anonymize', statement: 'Remove your name from the manuscript.', mode: 'fix', source: { kind: 'author' }, params: { required: true }, enabled: true }] };
+  await page.setInputFiles('#sheet-file', { name: 'stray.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(stray)) });
+  const strayRow = page.locator('.category', { has: page.locator('#category-other', { hasText: 'Other requirements' }) }).locator('.rule', { hasText: 'Remove your name from the manuscript.' });
+  await strayRow.waitFor();
+  assert.equal(await page.locator('.rule').count(), stray.rules.length, 'every rule in the loaded sheet is visible');
+  await strayRow.getByRole('switch', { name: 'Use this rule' }).uncheck();
+  assert.equal(await strayRow.getAttribute('class'), 'rule off');
+  log('a loaded rule in a category a monograph does not have shows under "Other requirements" and can be switched off');
+
+  // A conflict mark on a rule with no setting is refused as damaged, and the page keeps working.
+  const unsettled = { ...file, rules: [{ ...file.rules[0], slot: null, params: {}, mode: 'flag', conflict: true }] };
+  await page.setInputFiles('#sheet-file', { name: 'unsettled.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(unsettled)) });
+  await page.locator('#error-banner', { hasText: 'This rule sheet file is damaged and cannot be used.' }).waitFor();
+  assert.equal(await page.locator('.rule').count(), stray.rules.length, 'the sheet on the page is unchanged');
+  log('a sheet with a disagreement mark on a rule with no setting is refused as damaged; the page is unchanged');
+
   // Markup in a loaded sheet is shown as text.
   const hostile = { ...file, rules: [{ ...file.rules[0], statement: MARKUP }] };
   await page.setInputFiles('#sheet-file', { name: 'hostile.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(hostile)) });

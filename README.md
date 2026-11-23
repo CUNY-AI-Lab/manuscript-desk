@@ -6,7 +6,7 @@ It is for CUNY AI Lab members, behind CUNY Login, at `https://tools.ailab.gc.cun
 
 ## Privacy
 
-The file is opened in the browser and is not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms. Nothing is stored on the server. Work in progress is kept in this browser only, and cleared when the job is downloaded.
+The file is opened in the browser and is not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms. Nothing is stored on the server. Work in progress is kept in this browser only, and is cleared when you choose Start over or after 24 hours.
 
 ## How it runs
 

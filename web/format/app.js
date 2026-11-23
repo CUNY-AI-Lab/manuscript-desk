@@ -70,7 +70,7 @@ export function updateRule(sheet, id, changes) {
 // Keeps one of a set of conflicting rules and removes the others in its slot.
 export function keepRule(sheet, id) {
   const kept = sheet.rules.find(rule => rule.id === id);
-  if (!kept) return sheet;
+  if (!kept || kept.slot === null) return sheet;
   const rules = sheet.rules
     .filter(rule => rule === kept || !(rule.conflict && rule.slot === kept.slot))
     .map(rule => {

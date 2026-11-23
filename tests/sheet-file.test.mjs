@@ -36,6 +36,9 @@ test('refuses non-JSON, wrong version, invalid sheet, each with its exact messag
   assert.deepEqual(sheetFromFile(text.replace('"version": 1', '"version": 2')), { ok: false, message: OTHER_VERSION });
   assert.deepEqual(sheetFromFile(text.replace('"mode": "fix"', '"mode": "sometimes"')), { ok: false, message: DAMAGED });
   assert.deepEqual(sheetFromFile(text.replace('"other-a1"', '"quotations-1"')), { ok: false, message: DAMAGED }, 'two rules with one id');
+  const unsettled = sample();
+  unsettled.rules[1].conflict = true;
+  assert.deepEqual(sheetFromFile(sheetToFile(unsettled).text), { ok: false, message: DAMAGED }, 'a conflict on a rule with no setting');
 });
 
 test('a statement containing markup comes back as the same literal string', () => {
