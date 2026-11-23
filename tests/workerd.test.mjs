@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { createTestIdentityIssuer } from '@cuny-ai-lab/cail-identity/testing';
+import { builtAssets } from './built-assets.mjs';
 
 // Runs the bundled Worker in real workerd with the production compatibility date and flags. The
 // Gateway is a second workerd Worker reached through the GATEWAY service binding; nothing leaves
@@ -95,18 +94,6 @@ export default { fetch: createHandler({ fetchImpl: (input, init) => fetch(input,
     assert.deepEqual(await global.gatewayStatus(), { catalogReads: 0 });
   } finally { await global.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
-
-// dist/ as `npm run build` writes it; built here only when it is missing.
-async function builtAssets() {
-  const page = resolve('dist/format/index.html');
-  try {
-    await access(page);
-  } catch {
-    await promisify(execFile)(process.execPath, ['scripts/build.mjs']);
-    await access(page);
-  }
-  return resolve('dist');
-}
 
 test('the Formatter page is served from the real build, with the slash-less path redirected to it', async t => {
   let assetsDirectory;
