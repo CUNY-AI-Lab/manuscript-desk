@@ -181,6 +181,7 @@ async function runningTitles({ work, sheet, report, paragraphs, environment, err
  * The reading check on the units given, its answers cached in work/reading-answers.json by model
  * and request text; a call is made only when the cache is missing, with the key in CAIL_API_KEY.
  */
+const OUT_OF_ROOM = '\u0000model_output_limit';
 async function reading({ work, units, environment, err }) {
   const file = path.join(work, 'reading-answers.json');
   const cache = (await readJson(file))?.answers ?? {};
@@ -191,12 +192,23 @@ async function reading({ work, units, environment, err }) {
   const ask = async ({ model, unit }) => {
     // Keyed by what the call sends, so an answer to another prompt or setting is never reused.
     const id = `${model}\u0000${READING_THINKING}\u0000${readingPrompt()}\u0000${unit}`;
+    // An answer that ran out of room is cached too, so a re-score reads the same halves.
+    const outOfRoom = () => Object.assign(new Error('model_output_limit'), { code: 'model_output_limit', retry: false });
+    if (cache[id] === OUT_OF_ROOM) { cached += 1; throw outOfRoom(); }
     if (cache[id]) { cached += 1; return cache[id]; }
     const key = environment.CAIL_API_KEY?.trim();
     if (!key) throw new Error('The reading answers are not cached and CAIL_API_KEY is not set; set it to your CAIL Gateway key (it pays for the calls).');
     rows ??= (await readCatalog()) ?? new Map();
     call ??= createGatewayCall({ key, rows, usage, payloadOf: (request, row) => readingPayload({ ...request, row }) });
-    const { content } = await call({ model, unit });
+    let content;
+    try {
+      ({ content } = await call({ model, unit }));
+    } catch (error) {
+      if (error?.code !== 'model_output_limit') throw error;
+      cache[id] = OUT_OF_ROOM;
+      await writeFile(file, JSON.stringify({ answers: cache }));
+      throw outOfRoom();
+    }
     cache[id] = content;
     await writeFile(file, JSON.stringify({ answers: cache }));
     return content;
