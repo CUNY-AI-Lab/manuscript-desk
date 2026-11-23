@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { strFromU8, unzipSync, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { DECLARED } from '../lib/format/declared.js';
 import { formatDocx } from '../lib/format/format.js';
 import { validateDocx } from '../lib/docx/validate.js';
@@ -255,4 +255,36 @@ test('every declared change says where it was made, by source paragraph; the rep
   assert.ok(places(DECLARED.emptyRemoved).length === declared(result, DECLARED.emptyRemoved));
   assert.deepEqual(result.report.figures.map(({ label, placeholder }) => ({ label, placeholder })), [{ label: '1.1', placeholder: true }]);
   assert.deepEqual(places(DECLARED.markerRewritten), [result.report.figures[0].index]);
+});
+
+test('changes to words are tracked by CAIL Manuscript Desk: accepting them gives the output, rejecting them the source', () => {
+  const { result, source } = format([RULES.split, RULES.markers], {});
+  const xml = part(result.bytes, 'word/document.xml');
+  const validity = validateDocx(result.bytes);
+  assert.deepEqual(validity.problems, []);
+  assert.equal(validity.counts.revisions, result.report.revisions);
+  assert.ok(result.report.revisions >= 5);
+  // The split title: the separator deleted at the end of the first part, whose paragraph mark is new.
+  assert.match(xml, /<w:pStyle w:val="Heading1"\/>(?:(?!<\/w:p>).)*<w:rPr><w:ins w:id="\d+" w:author="CAIL Manuscript Desk" w:date="[^"]+"\/><\/w:rPr><\/w:pPr>(?:(?!<\/w:p>).)*>Paper Lanterns<\/w:t><\/w:r><w:del w:id="\d+" w:author="CAIL Manuscript Desk" w:date="[^"]+"><w:r>(?:<w:rPr>(?:(?!<\/w:rPr>).)*<\/w:rPr>)?<w:delText xml:space="preserve">: <\/w:delText><\/w:r><\/w:del><\/w:p>/);
+  // The placeholder marker: its old text deleted, the new marker inserted.
+  assert.match(xml, /<w:ins w:id="\d+" w:author="CAIL Manuscript Desk" w:date="[^"]+"><w:r><w:t xml:space="preserve">\[Figure 1\.1 about here\]<\/w:t><\/w:r><\/w:ins>/);
+  assert.match(xml, /<w:delText xml:space="preserve">\[FIGURE 1 HERE\]<\/w:delText>/);
+  // The caption line is an inserted paragraph.
+  assert.match(xml, /<w:pStyle w:val="FigureCaption"\/><w:rPr><w:ins [^>]*\/><\/w:rPr><\/w:pPr><w:ins [^>]*><w:r><w:t xml:space="preserve">Figure 1\.1<\/w:t>/);
+  assert.doesNotMatch(xml, /<w:del [^>]*>(?:(?!<\/w:del>).)*<w:t[ >]/, 'deleted text is delText');
+  // Ids are unique and above the source's bookmark id.
+  const ids = [...xml.matchAll(/<w:(?:ins|del) w:id="(\d+)"/g)].map(match => Number(match[1]));
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(Math.min(...ids) > 7);
+  // Rejecting every change gives back the source's words; accepting them, the output's.
+  const reject = text => text.replace(/<w:ins [^>]*\/>/g, '').replace(/<w:ins [^>]*>(?:(?!<\/w:ins>).)*<\/w:ins>/g, '').replace(/<w:del [^>]*>((?:(?!<\/w:del>).)*)<\/w:del>/g, '$1').replace(/<w:delText/g, '<w:t').replace(/<\/w:delText>/g, '</w:t>');
+  const files = unzipSync(result.bytes);
+  const rejected = zipSync({ ...files, 'word/document.xml': strToU8(reject(xml)) });
+  const words = bytes => { const { files: parts, main } = readPackage(bytes); return documentWords(parts, main); };
+  const back = compareWords(words(source), words(rejected), []);
+  assert.equal(back.removed + back.added, 0, 'rejected: the source\'s words');
+  // The word reader can read the output as if every change were rejected.
+  const asRejected = (() => { const { files: parts, main } = readPackage(result.bytes); return documentWords(parts, main, { rejected: true }); })();
+  assert.deepEqual(asRejected, words(rejected));
+  assert.equal(wordCheck({ result, source }).undeclaredAdded, 0, 'accepted: only the declared words');
 });

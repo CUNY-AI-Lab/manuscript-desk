@@ -430,6 +430,8 @@ async function main(argv, environment, { out = console.log, err = console.error 
   out('Declared transformations:');
   for (const entry of report.declared) out(`  ${entry.kind}: ${entry.count}${entry.removedWords.length || entry.addedWords.length ? ` (words -${entry.removedWords.length} +${entry.addedWords.length})` : ''}`);
   out(`Needs the author: ${Object.entries(report.needsAuthor).map(([kind, count]) => `${kind} ${count}`).join('; ') || 'none'}.`);
+  const rejected = compareWords(sourceWords, documentWords(outputRead.files, outputRead.main, { rejected: true }), []);
+  out(`Tracked changes: ${validity.counts.revisions}; with all of them rejected, words differing from the source: removed ${rejected.removed}, added ${rejected.added}.`);
   out(`Validity: ${validity.ok ? 'valid' : `INVALID (${validity.problems.map(problem => `${problem.code} in ${problem.part} x${problem.count}`).join(', ')})`}; ${validity.counts.parts} parts, ${validity.counts.footnoteReferences} note references.`);
   out(`Output written to the case's work/ folder as ${path.basename(outputFile)}.`);
   if (values.pdf) out(`LibreOffice: ${await pdfSmoke(outputFile)}.`);
