@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -27,13 +29,17 @@ export default { async fetch(request) {
 // Starts the Worker built from `entry` (the real server/worker.js unless a test says otherwise).
 // Every global fetch() is answered as production answers a global fetch() to the tool's own zone:
 // by the zone origin, with a 404, not by the Gateway Worker.
-async function startWorker({ entry = resolve('server/worker.js'), gatewayBinding = true } = {}) {
+// `assetsDirectory` serves a real build (dist/) instead of a one-page stand-in.
+async function startWorker({ entry = resolve('server/worker.js'), gatewayBinding = true, assetsDirectory = null } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'manuscript-workerd-'));
   const outfile = join(directory, 'worker.mjs');
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'neutral', external: ['cloudflare:workers', 'node:*'], logLevel: 'silent' });
-  const assets = join(directory, 'assets');
-  await mkdir(assets);
-  await writeFile(join(assets, 'index.html'), '<!doctype html><title>Manuscript Desk</title>');
+  let assets = assetsDirectory;
+  if (!assets) {
+    assets = join(directory, 'assets');
+    await mkdir(assets);
+    await writeFile(join(assets, 'index.html'), '<!doctype html><title>Manuscript Desk</title>');
+  }
   const issuer = await createTestIdentityIssuer();
   const outbound = [];
   const base = { modules: true, modulesRoot: '/', compatibilityDate, compatibilityFlags };
@@ -49,7 +55,7 @@ async function startWorker({ entry = resolve('server/worker.js'), gatewayBinding
     { ...base, name: 'gateway', script: gatewayScript },
   ] }));
   const gatewayStatus = async () => (await (await runtime.getWorker('gateway')).fetch('https://gateway/__status')).json();
-  return { runtime, outbound, gatewayStatus, dispose: async () => { await runtime.dispose(); await rm(directory, { recursive: true, force: true }); } };
+  return { runtime, issuer, outbound, gatewayStatus, dispose: async () => { await runtime.dispose(); await rm(directory, { recursive: true, force: true }); } };
 }
 
 test('health reads the catalog through the GATEWAY binding', async () => {
@@ -88,4 +94,52 @@ export default { fetch: createHandler({ fetchImpl: (input, init) => fetch(input,
     assert.deepEqual(global.outbound, ['https://tools.ailab.gc.cuny.edu/v1/catalog?modality=all']);
     assert.deepEqual(await global.gatewayStatus(), { catalogReads: 0 });
   } finally { await global.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+// dist/ as `npm run build` writes it; built here only when it is missing.
+async function builtAssets() {
+  const page = resolve('dist/format/index.html');
+  try {
+    await access(page);
+  } catch {
+    await promisify(execFile)(process.execPath, ['scripts/build.mjs']);
+    await access(page);
+  }
+  return resolve('dist');
+}
+
+test('the Formatter page is served from the real build, with the slash-less path redirected to it', async t => {
+  let assetsDirectory;
+  try {
+    assetsDirectory = await builtAssets();
+  } catch (error) {
+    t.skip(`dist/ is missing and could not be built (run npm run vendor, then npm run build): ${error.message.split('\n')[0]}`);
+    return;
+  }
+  const worker = await startWorker({ assetsDirectory });
+  try {
+    const headers = {
+      'x-cail-identity-jwt': await worker.issuer.mintIdentityJwt({ audience: 'cail:manuscript', expiresInSeconds: 3600 }),
+      'x-cail-gateway-identity-jwt': await worker.issuer.mintIdentityJwt({ audience: 'cail:gateway' }),
+    };
+    const base = 'https://tools.ailab.gc.cuny.edu/manuscript';
+    const redirect = await worker.runtime.dispatchFetch(`${base}/format?from=menu`, { headers, redirect: 'manual' });
+    await redirect.arrayBuffer();
+    assert.equal(redirect.status, 308);
+    assert.equal(redirect.headers.get('location'), `${base}/format/?from=menu`);
+    assert.equal(redirect.headers.get('cache-control'), 'no-store');
+    const page = await worker.runtime.dispatchFetch(`${base}/format/`, { headers, redirect: 'manual' });
+    const html = await page.text();
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-type'), /text\/html/);
+    assert.match(html, /<title>Formatter \| Manuscript Desk \| CUNY AI Lab<\/title>/);
+    // The page's relative links resolve inside the folder and are served.
+    for (const [path, type] of [['/format/app.js', /javascript/], ['/shared/styles.css', /text\/css/]]) {
+      const asset = await worker.runtime.dispatchFetch(`${base}${path}`, { headers, redirect: 'manual' });
+      await asset.arrayBuffer();
+      assert.equal(asset.status, 200, path);
+      assert.match(asset.headers.get('content-type'), type, path);
+    }
+    assert.deepEqual(worker.outbound, [], 'no global fetch');
+  } finally { await worker.dispose(); }
 });

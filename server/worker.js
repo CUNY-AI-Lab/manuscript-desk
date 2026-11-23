@@ -24,6 +24,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 class AppError extends Error {
   constructor(code, message, status = 400) { super(message); Object.assign(this, { code, status }); }
 }
+// The mount, or an asset path under it whose last segment has no file extension and no trailing
+// slash; API paths are never folders.
+const isFolderWithoutSlash = pathname => pathname === MOUNT
+  || (pathname.startsWith(`${MOUNT}/`) && pathname !== `${MOUNT}/api` && !pathname.startsWith(`${MOUNT}/api/`)
+    && !pathname.endsWith('/') && !pathname.slice(pathname.lastIndexOf('/') + 1).includes('.'));
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers } });
 
 async function boundedText(message, limit = MAX_BODY) {
@@ -135,8 +140,10 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
       const credential = await authenticate(request, env);
       if (!['GET', 'HEAD', 'POST'].includes(request.method)) throw new AppError('method_not_allowed', 'Method not allowed.', 405);
       if (request.method === 'POST' && request.headers.get('origin') !== ORIGIN) throw new AppError('invalid_origin', 'Reload this tool from the CUNY AI Lab tools page.', 403);
-      if (url.pathname === MOUNT && ['GET', 'HEAD'].includes(request.method)) {
-        url.pathname = `${MOUNT}/`;
+      // A folder asked for without its trailing slash (the mount itself, or a page such as /format)
+      // goes to the same path with one, so the page's relative links resolve inside the folder.
+      if (isFolderWithoutSlash(url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
+        url.pathname = `${url.pathname}/`;
         return new Response(null, { status: 308, headers: { location: url.href, 'cache-control': 'no-store' } });
       }
       if (!url.pathname.startsWith(`${MOUNT}/`)) throw new AppError('not_found', 'Not found.', 404);

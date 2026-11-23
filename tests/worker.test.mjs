@@ -139,3 +139,32 @@ test('GET /manuscript redirects 308 to /manuscript/', async () => {
   }
   assert.equal((await handle(new Request(`${ORIGIN}/manuscript`), env)).status, 401);
 });
+
+test('an asset path with no extension and no trailing slash redirects 308 to the same path with one', async () => {
+  const handle = createHandler({ gatewayFetch: noGateway });
+  const assets = [];
+  const configured = { ...env, ASSETS: htmlAssets(assets) };
+  for (const method of ['GET', 'HEAD']) {
+    const response = await handle(await signed('/format', {}, { method }), configured);
+    assert.equal(response.status, 308, method);
+    assert.equal(response.headers.get('location'), `${ORIGIN}/manuscript/format/`);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+  }
+  const query = await handle(await signed('/format?from=menu&x=1'), configured);
+  assert.equal(query.status, 308);
+  assert.equal(query.headers.get('location'), `${ORIGIN}/manuscript/format/?from=menu&x=1`, 'the query string is kept');
+  assert.deepEqual(assets, [], 'a redirect does not reach the assets');
+
+  const script = await handle(await signed('/format/app.js'), configured);
+  assert.equal(script.status, 200, 'a file is not redirected');
+  const page = await handle(await signed('/format/'), configured);
+  assert.equal(page.status, 200, 'a folder with its slash is not redirected');
+  assert.deepEqual(assets, ['/format/app.js', '/format/']);
+
+  const session = await handle(await signed('/api/session'), configured);
+  assert.equal(session.status, 200, 'an API path is not redirected');
+  assert.deepEqual(await failure(await handle(await signed('/api/nothing-here'), configured)), [404, 'not_found']);
+  assert.notEqual((await handle(await signed('/api'), configured)).status, 308, 'nor is the API folder itself');
+  // Only a signed-in request is redirected, as for /manuscript itself.
+  assert.equal((await handle(at('/format'), configured)).status, 401);
+});
