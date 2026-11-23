@@ -2,7 +2,7 @@ import { CAIL_CANONICAL_ISSUER, loadIdentityVerifierConfig, readIdentityKeyring,
 import { CailError, createCailClient } from '@cuny-ai-lab/cail-client';
 import { DOC_TYPES, slotsFor } from '../lib/rules/schema.js';
 import { modelControls } from './model.js';
-import { GROUPS, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
+import { GROUPS, readingPayload, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -215,6 +215,16 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         if (typeof body.titles !== 'string' || !body.titles.trim() || body.titles.length > MAX_TITLES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 20,000 characters of chapter titles.');
         const payload = runningTitlesPayload({ model, titles: body.titles, max: body.max, row: await catalogRow(model, signal) });
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished the running titles. Try again, or choose another model.');
+        return json({ content, request_id: requestId });
+      }
+      if (path === '/api/reading' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        const model = validateModel(body.model);
+        // The chapter's text is never echoed in an error, logged or stored.
+        if (typeof body.unit !== 'string' || !body.unit.trim() || body.unit.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of one chapter at a time.');
+        const payload = readingPayload({ model, unit: body.unit, row: await catalogRow(model, signal) });
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this chapter. Try again, or choose another model.');
         return json({ content, request_id: requestId });
       }
       if (path.startsWith('/api/')) throw new AppError('not_found', 'Not found.', 404);

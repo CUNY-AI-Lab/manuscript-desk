@@ -175,3 +175,6 @@ footer { background: white; border-top: 1px solid var(--border-gray); font-size:
   .panel-actions .button, .sheet-actions .button { flex-grow: 1; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto !important; } }
+.opt-in { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; }
+.opt-in input { margin-top: 3px; }
+.opt-in label { margin: 0; font-weight: 600; }

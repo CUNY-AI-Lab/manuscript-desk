@@ -428,6 +428,18 @@ try {
     return json(route, { request_id: 'r', content: JSON.stringify({ roles: Object.fromEntries(labelLines(body.passage).map(index => [index, index === wrong ? 'verse' : GOLD[index] ?? 'body'])) }) });
   });
   await context7.route('**/manuscript/api/running-titles', route => { titleCalls.push(JSON.parse(route.request().postData())); return json(route, { request_id: 'r', content: TITLES }); });
+  // The mocked reading check queries the first words of the first text line of each chapter it is
+  // sent, and invents one quotation, which the page must drop.
+  const readingCalls = [];
+  await context7.route('**/manuscript/api/reading', route => {
+    const body = JSON.parse(route.request().postData());
+    readingCalls.push(body);
+    const [, index, text] = /^\[(\d+)\] \([^)]*\) (.{12,})$/mu.exec(body.unit);
+    return json(route, { request_id: 'r', content: JSON.stringify({ findings: [
+      { kind: 'typo', paragraph: Number(index), quote: text.split(' ').slice(0, 4).join(' '), note: 'Check this <b>word</b>.' },
+      { kind: 'typo', paragraph: Number(index), quote: 'words the chapter does not have', note: 'Invented.' },
+    ] }) });
+  });
   const page7 = await context7.newPage();
   watch(page7);
   await page7.goto(pageUrl);
@@ -488,6 +500,19 @@ try {
   assert.match(await page7.locator('#output-status').textContent(), /^Formatted\. \d+ comments in the file/);
   assert.ok((await page7.locator('#summary-changed + ul li').count()) > 3);
   log(`step 6: formatted in the page; ${expected.files.length} downloads (${expected.files.map(file => file.id).join(', ')}), each a valid Word file; the manuscript has the expected ${validateDocx(expected.files[0].bytes).counts.comments} comments`);
+
+  assert.equal(readingCalls.length, 0, 'the reading check is not run unless chosen');
+  assert.match(await page7.locator('#reading-plan').textContent(), /^Optional, 2 model calls, one per chapter/);
+  const itemsBefore = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
+  await page7.getByLabel('Also read the opening of each chapter for queries an editor would make').check();
+  await page7.locator('#output-stale').waitFor();
+  await page7.getByRole('button', { name: 'Format the manuscript' }).click();
+  await page7.locator('#summary-flagged + ul li', { hasText: 'The reading check read the opening of 2 chapters and proposed 2 queries' }).waitFor();
+  assert.equal(readingCalls.length, 2);
+  assert.equal(readingCalls[0].model, DEFAULT_MODEL);
+  const itemsAfter = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
+  assert.equal(itemsAfter, itemsBefore + 2, 'the two verified queries are To-dos; the invented one is dropped');
+  log('step 6: the reading check states its 2 calls, runs only when ticked, and adds only the queries whose quotation is in the text');
 
   await page7.reload();
   await page7.locator('#file-notice', { hasText: 'Labels for manuscript.docx are kept in this browser' }).waitFor();

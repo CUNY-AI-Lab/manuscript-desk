@@ -81,6 +81,9 @@ test('hints: image, footnote reference, list numbering and page break', async ()
   assert.equal(figure.hints.empty, false, 'an image alone is not empty');
   assert.equal(figure.text, '');
   assert.equal(noted.hints.footnote, true);
+  assert.deepEqual(noted.notes, [23], 'where the note reference stands in the text');
+  assert.equal(noted.text, 'A sentence with a note.');
+  assert.equal(listed.notes, undefined, 'no notes, no list of them');
   assert.equal(listed.hints.list, true);
   assert.equal(broken.hints.pageBreak, true);
   assert.equal(broken.text, 'After a page break', 'a page break adds no text');

@@ -13,7 +13,7 @@ import {
   manuscriptSize, matchFile, neighbours, newLabels, restoredLabels, reviewHeadline, reviewModel, rolesOfReply, savedLabels, sha256,
   unlabelledParagraphs,
 } from '../web/format/manuscript-state.js';
-import { STALE, afterFormat, baseName, buildOutputs, isStale, outputBasis, outputSummary, runningTitlesRule } from '../web/format/output-state.js';
+import { STALE, afterFormat, baseName, buildOutputs, isStale, outputBasis, outputSummary, readingPlan, runningTitlesRule } from '../web/format/output-state.js';
 import { RULES, manuscript, sheetWith } from './manuscript-fixture.mjs';
 
 const JARGON = /\b(slot|schema|json|payload|params?|role id|hash)\b/i;
@@ -208,6 +208,38 @@ test('running titles are asked only when a rule asks for them, and a failed requ
   assert.equal(failed.ok, true);
   assert.ok(failed.files.some(file => file.id === 'running-titles-template'));
   assert.match(failed.summary.notes.join(' '), /Running titles could not be proposed/);
+});
+
+test('the reading check runs only when chosen, states its calls first, and its verified queries become comments', async () => {
+  const calls = readingPlan({ paragraphs, roles: GOLD, sheet: SHEET });
+  assert.ok(calls >= 1);
+  assert.equal(readingPlan({ paragraphs, roles: null, sheet: SHEET }), 0);
+  const without = await buildOutputs({ bytes, paragraphs, roles: GOLD, sheet: SHEET, name: 'b.docx' });
+  const asked = [];
+  // The fake model quotes the first words of the first paragraph it was shown, and invents one quotation.
+  const readText = async ({ unit }) => {
+    asked.push(unit);
+    const line = unit.split('\n').find(text => /^\[\d+\] \([^)]*\) .{12,}$/u.test(text));
+    const [, index, text] = /^\[(\d+)\] \([^)]*\) (.*)$/u.exec(line);
+    return JSON.stringify({ findings: [
+      { kind: 'typo', paragraph: Number(index), quote: text.split(' ').slice(0, 4).join(' '), note: 'Check this word.' },
+      { kind: 'typo', paragraph: Number(index), quote: 'words that are not there at all', note: 'Invented.' },
+    ] });
+  };
+  const progress = [];
+  const result = await buildOutputs({ bytes, paragraphs, roles: GOLD, sheet: SHEET, name: 'b.docx', readText, onReading: event => progress.push(event) });
+  assert.equal(asked.length, calls, 'one call per chapter, as stated');
+  assert.deepEqual(progress.at(-1), { done: calls, total: calls });
+  assert.equal(result.ok, true);
+  assert.equal(result.summary.counts.items, without.summary.counts.items + calls, 'each kept query is a To-dos item (and part of the comment at its paragraph)');
+  assert.equal(result.summary.counts.reading, calls, 'only the verified query of each chapter is kept');
+  assert.match(result.summary.flagged.join(' '), /The reading check read the opening of/);
+  assert.equal(validateDocx(result.files[0].bytes).ok, true);
+  assert.notEqual(outputBasis({ sheet: SHEET, roles: GOLD, reading: true }), outputBasis({ sheet: SHEET, roles: GOLD }), 'choosing the reading check makes earlier files out of date');
+  const failed = await buildOutputs({ bytes, paragraphs, roles: GOLD, sheet: SHEET, name: 'b.docx', readText: async () => { throw { code: 'upstream_timeout', retry: false }; } });
+  assert.equal(failed.ok, true, 'files are still offered');
+  assert.match(failed.summary.notes.join(' '), /The reading check could not read/);
+  for (const line of [...result.summary.flagged, ...failed.summary.notes]) assert.doesNotMatch(line, JARGON);
 });
 
 test('a formatter failure offers nothing and gives the reason; a failed re-run keeps the files made before', async () => {

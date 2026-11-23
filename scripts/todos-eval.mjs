@@ -6,7 +6,7 @@
 // the tool produced (same kind, same chapter, anchored on the same paragraph or within two
 // paragraphs of it), the misses by kind, and the findings that match no comment, by kind.
 //
-//   npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles]
+//   npm run todos-eval -- [--case <folder>] [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--key <file>] [--running-titles] [--reading dev|holdout|all]
 //
 // A case is a folder under manuscripts/ in MANUSCRIPT_DESK_GUIDELINES (default
 // ../manuscript-desk-guidelines) with source.docx, gold-roles.json and work/comments-key.json (and
@@ -15,7 +15,10 @@
 // stdout: counts, percentages, kinds and class names. It prints no manuscript text and no comment
 // wording. The rule sheet and predicted roles come from the work/ cache; the one model call it can
 // make, with --running-titles, proposes running titles, uses the key in CAIL_API_KEY and is cached
-// in work/running-titles.json.
+// in work/running-titles.json. With --reading, the reading check (lib/checks/reading.js) reads the
+// opening of the chapters named (dev, holdout or all) with the same key, its answers cached in
+// work/reading-answers.json; the findings it kept, with their quotations, go to the private
+// work/reading-findings-<tag>.json for review, and stdout gets their counts only.
 
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -29,13 +32,14 @@ import { readPackage } from '../lib/docx/write.js';
 import { formatDocx } from '../lib/format/format.js';
 import { compareWords, documentWords } from '../lib/format/words.js';
 import { runChecks } from '../lib/checks/run.js';
+import { readChapters, readingFindings, readingUnits } from '../lib/checks/reading.js';
 import { companionDocuments } from '../lib/todos/companions.js';
 import { proposeRunningTitles } from '../lib/todos/running.js';
 import { fullTitle } from '../lib/todos/shared.js';
 import { ruleWith } from '../lib/checks/rules.js';
 import { commentsFor, todosDocument } from '../lib/todos/todos.js';
 import { validateSheet } from '../lib/rules/schema.js';
-import { runningTitlesPayload } from '../server/prompts.js';
+import { READING_THINKING, readingPayload, readingPrompt, runningTitlesPayload } from '../server/prompts.js';
 import { checkGold } from './roles-eval.mjs';
 import { costOf, createGatewayCall, readCatalog, table } from './generality.mjs';
 
@@ -56,6 +60,8 @@ file, keyed in work/comments-key.json.
   --key         the answer key (default work/comments-key.json)
   --running-titles  propose running titles with a model (cached in work/running-titles.json; a call,
                     made only when the cache is missing, uses the key in CAIL_API_KEY, which pays for it)
+  --reading     run the reading check on the dev, holdout or all chapters (answers cached in
+                work/reading-answers.json; calls, made only when the cache is missing, use CAIL_API_KEY)
 Otherwise no model call is made; a missing cache is an error.`;
 
 // ---------------------------------------------------------------------------------------------
@@ -171,13 +177,42 @@ async function runningTitles({ work, sheet, report, paragraphs, environment, err
   return { ...result, cost: usage.calls ? costOf(usage, rows?.get(DEFAULT_MODEL)) : undefined };
 }
 
+/**
+ * The reading check on the units given, its answers cached in work/reading-answers.json by model
+ * and request text; a call is made only when the cache is missing, with the key in CAIL_API_KEY.
+ */
+async function reading({ work, units, environment, err }) {
+  const file = path.join(work, 'reading-answers.json');
+  const cache = (await readJson(file))?.answers ?? {};
+  let rows = null;
+  let call = null;
+  const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
+  let cached = 0;
+  const ask = async ({ model, unit }) => {
+    // Keyed by what the call sends, so an answer to another prompt or setting is never reused.
+    const id = `${model}\u0000${READING_THINKING}\u0000${readingPrompt()}\u0000${unit}`;
+    if (cache[id]) { cached += 1; return cache[id]; }
+    const key = environment.CAIL_API_KEY?.trim();
+    if (!key) throw new Error('The reading answers are not cached and CAIL_API_KEY is not set; set it to your CAIL Gateway key (it pays for the calls).');
+    rows ??= (await readCatalog()) ?? new Map();
+    call ??= createGatewayCall({ key, rows, usage, payloadOf: (request, row) => readingPayload({ ...request, row }) });
+    const { content } = await call({ model, unit });
+    cache[id] = content;
+    await writeFile(file, JSON.stringify({ answers: cache }));
+    return content;
+  };
+  err(`${DEFAULT_MODEL}: reading the opening of ${units.length} chapters (cached afterwards)`);
+  const result = await readChapters({ units, model: DEFAULT_MODEL, call: ask });
+  return { ...result, calls: usage.calls, cached, cost: usage.calls ? costOf(usage, rows?.get(DEFAULT_MODEL)) : 0 };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Command line
 
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, 'running-titles': { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, predicted: { type: 'boolean' }, sheet: { type: 'string' }, chapters: { type: 'string' }, key: { type: 'string' }, 'running-titles': { type: 'boolean' }, reading: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -217,6 +252,18 @@ async function main(argv, environment, { out = console.log, err = console.error 
   if (!formatted.ok) { err(`The formatter stopped: ${formatted.code}.`); return 1; }
   const { report } = formatted;
   const { findings, checks } = runChecks({ paragraphs: read.paragraphs, roles, report, sheet });
+  // The reading check, on the chapters named: its findings join the checks' before the comments.
+  const chapterKey = index => (index === null || index === undefined ? null : gold.chapters.find(chapter => index >= chapter.first && index <= chapter.last)?.key ?? null);
+  const splitOf = key => (key === null ? 'front' : gold.dev.includes(key) ? 'dev' : gold.holdout.includes(key) ? 'holdout' : '-');
+  let readingRun = null;
+  if (values.reading !== undefined) {
+    if (!['dev', 'holdout', 'all'].includes(values.reading)) { err('--reading is dev, holdout or all.'); return 1; }
+    const units = readingUnits({ paragraphs: read.paragraphs, roles, chapters: report.chapters, sheet })
+      .filter(unit => values.reading === 'all' || splitOf(chapterKey(unit.first)) === values.reading);
+    readingRun = { ...(await reading({ work, units, environment, err })), units: units.length };
+    findings.push(...readingFindings(readingRun.findings));
+    findings.sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
+  }
   const comments = commentsFor(findings, sheet);
   const commented = addComments(formatted.bytes, { map: report.map, comments });
   if (!commented.ok) { err(`The comments could not be written: ${commented.code}.`); return 1; }
@@ -272,6 +319,17 @@ async function main(argv, environment, { out = console.log, err = console.error 
   for (const place of extra.filter(entry => shown(chapterOf(entry.paragraphIndex)))) bump(extraKinds, `${place.kind} (${split(chapterOf(place.paragraphIndex))})`);
   out(`Extra places by kind: ${tally(extraKinds)}.`);
   out(`Checks not run: ${checks.filter(check => !check.ran).map(check => check.id).join(', ') || 'none'}.`);
+  if (readingRun) {
+    const extraAt = new Set(extra.map(place => `${place.kind}\u0000${place.paragraphIndex}`));
+    const kept = readingRun.findings.map(finding => ({ chapter: chapterKey(finding.paragraph), split: splitOf(chapterKey(finding.paragraph)), ...finding, matched: !extraAt.has(`${finding.kind}\u0000${finding.paragraph}`) }));
+    await writeFile(path.join(work, `reading-findings-${tag}.json`), JSON.stringify(kept, null, 1));
+    const bySplit = new Map();
+    for (const finding of kept) bump(bySplit, `${finding.split} ${finding.matched ? 'matched' : 'extra'}`);
+    const byKind = new Map();
+    for (const finding of kept) bump(byKind, finding.kind);
+    const cost = readingRun.calls ? `, cost ${readingRun.cost === null ? 'unknown' : `$${readingRun.cost.toFixed(4)}`}` : '';
+    out(`Reading check: ${readingRun.units} chapters (${readingRun.calls} calls made, ${readingRun.cached} answers from the cache${cost}); ${readingRun.failures.length} failed${readingRun.failures.length ? ` (${tally(new Map(readingRun.failures.map(failure => [failure.code, readingRun.failures.filter(other => other.code === failure.code).length])))})` : ""}; ${kept.length} findings kept, ${readingRun.dropped} dropped as unverified; by place: ${tally(bySplit)}; by kind: ${tally(byKind)}. Their quotations are in work/reading-findings-${tag}.json (private).`);
+  }
 
   // Companion documents.
   out('Companion documents:');
