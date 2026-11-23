@@ -141,10 +141,12 @@ test('a contents list kept as one block, a Word table of contents in a content c
   const { paragraphs, roles, report } = book([
     ['Invented Harbours', 'title-page'],
     ['Contents', 'front-matter-heading'],
-    ['Introduction\t1\nSalt Roads\t5\nThe Tide Tables of Imaginary Ports\t9\nBibliography\t20', 'contents-entry'],
+    ['Introduction\t1\nSalt Roads\t5\n1.1 Ledgers of Salt\t6\nThe Tide Tables of Imaginary Ports\t9\nBibliography\t20', 'contents-entry'],
     ['Introduction', 'title-block'],
     ['Text.', 'body'],
     ['Salt Roads', 'title-block'],
+    ['Text.', 'body'],
+    ['Ledgers of Salt', 'heading-1'],
     ['Text.', 'body'],
     ['The Tide Tables of Imaginary Ports', 'title-block'],
     ['Text.', 'body'],
@@ -152,4 +154,5 @@ test('a contents list kept as one block, a Word table of contents in a content c
   const result = compareContents(checkContext({ paragraphs, roles, report, sheet: { ...SHEET, docType: 'monograph' } }));
   assert.equal(result.chapters.filter(chapter => chapter.missing).length, 0, 'every chapter is in the list');
   assert.equal(result.chapters.length, 3);
+  assert.deepEqual(result.unmatched.map(line => line.text), ['Bibliography\t20'], 'a section heading listed in the contents matches its heading; the bibliography has no heading here');
 });
