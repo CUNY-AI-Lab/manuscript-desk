@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Build a book's index with CUNY AI Lab: a term list proposed from the manuscript, then the index with page numbers from the typeset proofs.">
+<title>Index Builder | Manuscript Desk | CUNY AI Lab</title>
+<link rel="stylesheet" href="../shared/styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the Index Builder</a>
+<header class="site-header"><div class="header-inner">
+<a class="brand" href="https://ailab.gc.cuny.edu/" aria-label="CUNY AI Lab home"><img src="../shared/cuny-ai-lab-logo.png" alt="CUNY AI Lab" width="220" height="49"></a>
+<nav aria-label="CUNY AI Lab"><a href="https://ailab.gc.cuny.edu/tools/">All tools</a><a href="https://tools.ailab.gc.cuny.edu/welcome">My account <span aria-hidden="true">↗</span></a></nav>
+</div></header>
+<main id="main" class="wrap">
+<div class="hero"><div><p class="breadcrumb"><a href="../">Manuscript Desk</a> <span aria-hidden="true">/</span> Index Builder</p><h1>Index Builder</h1><p class="subtitle">Make the term list from your manuscript, then build the index with page numbers from the typeset proofs.</p></div><button class="text-button" id="start-over" type="button">Start over</button></div>
+<p id="beta-notice" class="notice info"><strong>Beta, under test.</strong> Check every result yourself before you submit anything to a publisher or journal. Send feedback to the <a href="https://ailab.gc.cuny.edu/">CUNY AI Lab</a>.</p>
+<p id="announcer" class="sr-only" role="status" aria-live="polite"></p>
+<div class="workspace"><div class="work-column">
+<div id="error-banner" class="notice error" role="alert" hidden></div>
+<div id="signin-notice" class="notice error" role="alert" hidden></div>
+<p id="work-notice" class="notice info" hidden></p>
+
+<section class="panel" aria-labelledby="terms-title">
+<h2 id="terms-title" tabindex="-1">1. Term list</h2>
+<p class="section-intro">The terms and names the index covers, one per line, with other forms to search for in parentheses: <code>artificial intelligence (AI, machine learning)</code>. Names go under a line <code>Names:</code>, written <code>Last, First</code>; the proofs are searched for “First Last”. A line indented under an entry is a subentry, or a cross-reference written <code>see …</code> or <code>see also …</code>; <code>[ambiguous]</code> after an entry asks for its hits to be judged. A list from book-index works as it is.</p>
+<fieldset id="list-controls" class="plain">
+<legend class="sr-only">Load or add terms</legend>
+<div class="row-actions"><button id="load-list" class="button secondary" type="button">Load a term list</button><input id="list-file" type="file" accept=".txt,text/plain" hidden><button id="download-list" class="button secondary" type="button" disabled>Download the term list</button></div>
+<label for="paste-box">Or paste or type terms</label>
+<textarea id="paste-box" rows="5" spellcheck="false"></textarea>
+<div class="row-actions"><button id="add-pasted" class="button secondary" type="button">Add these terms</button></div>
+</fieldset>
+
+<h3>Propose terms from the manuscript</h3>
+<p class="help">A model reads the manuscript passage by passage and proposes entries: people (surname first), places, organizations, works and concepts, with other forms they take. Each proposal quotes its passage, and is left out when the quotation is not there. Bibliographies are left out, by the paragraph labels the Formatter keeps in this browser for the same file or else by their headings; footnotes and endnotes are not read. You then accept, drop, merge, rename or add.</p>
+<fieldset id="manuscript-controls" class="plain">
+<legend class="sr-only">Choose the manuscript</legend>
+<label for="manuscript-file">Choose the manuscript (Word .docx)</label>
+<input id="manuscript-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<p id="manuscript-status" class="help" aria-live="polite"></p>
+<label for="model-select">Model</label>
+<select id="model-select" aria-describedby="model-help"></select>
+<p id="model-help" class="help">Loading the list of models…</p>
+</fieldset>
+<div class="panel-actions"><button id="propose-button" class="button primary" type="button" disabled>Propose terms</button><button id="propose-stop" class="button secondary" type="button" hidden>Stop</button></div>
+<div id="propose-progress-area" hidden><p id="propose-progress-text" role="status" aria-live="polite"></p><progress id="propose-progress" max="1" value="0" aria-labelledby="propose-progress-text"></progress></div>
+<div id="propose-notices"></div>
+<div id="term-editor"></div>
+</section>
+
+<section class="panel" aria-labelledby="proofs-title">
+<h2 id="proofs-title" tabindex="-1">2. The proofs</h2>
+<p class="section-intro">Choose the typeset book as a PDF with selectable text. It is read in this browser and every term of the list is found on its pages, with no model, as book-index finds them. The optional helpers below then use a model where that saves you hand work.</p>
+<fieldset id="pdf-controls" class="plain">
+<legend class="sr-only">Choose the proofs</legend>
+<label for="pdf-file">Choose the proofs (PDF)</label>
+<input id="pdf-file" type="file" accept="application/pdf,.pdf">
+<label for="page-one">Book page 1 is PDF page</label>
+<input id="page-one" type="number" min="1" step="1" inputmode="numeric" aria-describedby="page-one-help">
+<p id="page-one-help" class="help">Leave this empty to use the page numbers stored in the PDF, or to count from its first page if it has none. Pages before it are skipped.</p>
+<div class="opt-in"><input id="match-case" type="checkbox" aria-describedby="match-case-help"><label for="match-case">Match capitalization</label></div>
+<p id="match-case-help" class="help">When on, “US” finds “US” but not “us”, and “Bush” the name but not the shrub.</p>
+</fieldset>
+<div class="panel-actions"><button id="build-button" class="button primary" type="button" disabled>Find the terms in the proofs</button></div>
+<div id="read-progress-area" hidden><p id="read-progress-text" role="status" aria-live="polite"></p><progress id="read-progress" max="1" value="0" aria-labelledby="read-progress-text"></progress></div>
+<p id="match-status" class="help" aria-live="polite"></p>
+
+<h3>Pages the index does not cover</h3>
+<p class="help">Front matter, sections of notes, bibliographies and an index already in the proofs. Type PDF page numbers, or let a model look at the first lines of each page and propose the ranges, each with the heading it saw on its first page; you confirm each one. A range that begins in the middle of a page keeps the text above its heading.</p>
+<label for="manual-ranges">Leave out PDF pages (for example 1-12, 280-300)</label>
+<input id="manual-ranges" type="text" inputmode="numeric" aria-describedby="manual-ranges-help">
+<p id="manual-ranges-help" class="help"></p>
+<div class="panel-actions"><button id="ranges-button" class="button secondary" type="button" disabled>Find these pages with a model</button><button id="ranges-stop" class="button secondary" type="button" hidden>Stop</button></div>
+<div id="ranges-area"></div>
+
+<h3>Ambiguous terms</h3>
+<p class="help">Entries whose hits may not all mean the entry: marked by you, a capitalized term found in lower case, a short abbreviation, a word another entry also searches for, a surname shared by people in the list, hits inside another entry’s longer hit. A model can read each hit with the words around it and propose keeping or dropping it, with a reason. Nothing is dropped until you apply it, and you can change each one.</p>
+<div class="panel-actions"><button id="judge-button" class="button secondary" type="button" disabled>Judge the hits in context</button><button id="judge-stop" class="button secondary" type="button" hidden>Stop</button></div>
+<div id="judge-area"></div>
+
+<h3>Subentries</h3>
+<p class="help">A page goes to a subentry when the subentry’s own words are on it. A model can read the other hits of an entry with subentries and propose the subentry each belongs to; you apply them entry by entry.</p>
+<div class="panel-actions"><button id="sort-button" class="button secondary" type="button" disabled>Sort hits into subentries</button><button id="sort-stop" class="button secondary" type="button" hidden>Stop</button></div>
+<div id="sort-area"></div>
+<div id="helper-progress-area" hidden><p id="helper-progress-text" role="status" aria-live="polite"></p><progress id="helper-progress" max="1" value="0" aria-labelledby="helper-progress-text"></progress></div>
+</section>
+
+<section class="panel" aria-labelledby="output-title">
+<h2 id="output-title" tabindex="-1">3. The index</h2>
+<p class="section-intro">Set the index as your press asks. Loading the rule sheet you made with the Formatter sets these from the guidelines when they say.</p>
+<fieldset id="style-controls" class="plain">
+<legend class="sr-only">Index style</legend>
+<div class="row-actions"><button id="load-sheet" class="button secondary" type="button">Load a rule sheet</button><input id="sheet-file" type="file" accept=".json,application/json" hidden></div>
+<p id="sheet-status" class="help" aria-live="polite"></p>
+<label for="layout-select">Layout</label>
+<select id="layout-select"><option value="indented">Indented: each subentry on its own line</option><option value="run-in">Run-in: subentries in one paragraph</option></select>
+<label for="style-select">Page ranges</label>
+<select id="style-select"><option value="chicago">Chicago (321–28, 101–8)</option><option value="full">Full (321–328)</option><option value="two-digit">At least two digits (104–08)</option></select>
+<label for="sorting-select">Order</label>
+<select id="sorting-select"><option value="letter-by-letter">Letter by letter (Newark before New York)</option><option value="word-by-word">Word by word (New York before Newark)</option></select>
+<div class="opt-in"><input id="collapse" type="checkbox" checked><label for="collapse">Join consecutive pages into ranges</label></div>
+</fieldset>
+<p id="output-status" class="help" aria-live="polite"></p>
+<div class="sheet-actions"><button id="download-text" class="button primary" type="button" disabled>Download the index (.txt)</button><button id="download-docx" class="button primary" type="button" disabled>Download the index (.docx)</button><button id="download-plain" class="button secondary" type="button" disabled>Download as book-index gives it (term: pages)</button></div>
+<div id="index-preview" class="index-preview" tabindex="0" aria-label="The index"></div>
+</section>
+<p class="privacy" id="privacy">The manuscript and the PDF are opened in this browser and are not uploaded. When you choose “Propose terms”, passages of the manuscript’s text (its paragraphs, without bibliographies, footnotes or endnotes) are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when you choose to find the pages the index does not cover, the first lines and short lines of each page of the PDF are sent the same way; when you choose to judge hits or sort them into subentries, the entry, its search forms, its subentries and the words around each of its hits are sent the same way. Nothing else leaves this browser, and nothing is stored on the server. This browser keeps the term list, the settings, the pages left out, the PDF’s and the manuscript’s file names and the decisions you and the models made (keep or drop, which subentry), but not the files or text from them, so that a reload or a new sign-in loses nothing. Downloading does not delete them. They are deleted 24 hours after your last change, also while this page stays open, and at once when you choose Start over or Delete saved work now.</p>
+<div class="row-actions"><button id="delete-saved" class="text-button danger" type="button">Delete saved work now</button></div>
+<p id="storage-note" class="notice" hidden>This browser could not keep a copy of your work. Download the term list before you close the page.</p>
+</div>
+
+<aside class="sidebar" aria-label="Your CUNY AI Lab account">
+<section class="quota-panel" aria-labelledby="quota-title"><div class="aside-heading"><h2 id="quota-title">Your CAIL usage</h2><button class="icon-button" id="refresh-quota" type="button" aria-label="Refresh usage estimate">↻</button></div>
+<p id="session-status" class="session-status" role="status">Checking your CUNY session…</p>
+<div id="quota-content"><p class="help">Loading your shared usage estimate…</p></div>
+<a class="account-link" href="https://tools.ailab.gc.cuny.edu/welcome">Manage your CUNY AI Lab account</a></section>
+<section class="sidebar-note" aria-labelledby="note-title"><h2 id="note-title">Check the index yourself</h2><p>The terms are found where their words are. An indexer also indexes a discussion where the word is not used and leaves out passing mentions: read through the index before you send it.</p><p>Each model helper says how many calls it makes before it runs. Every decision it proposes is shown, and nothing is applied until you apply it.</p></section>
+</aside>
+</div></main>
+<footer><div class="footer-inner"><span>© 2026 CUNY AI Lab</span><div><a href="https://ailab.gc.cuny.edu/">About the Lab</a><a href="../LICENSE.txt">GNU AGPL v3</a></div></div></footer>
+</body>
+</html>

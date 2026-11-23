@@ -1,0 +1,215 @@
+// The Index Builder page's decisions, as pure functions that load under Node: editing the term list,
+// what the index holds once the author's choices are applied, what is kept in this browser (never
+// the PDF, the manuscript or text from them) and how it comes back, the plans said before a model
+// helper runs, and the index conventions read from a Formatter rule sheet. app.js draws them.
+
+import { SHEET_VERSION, validateSheet } from '../../lib/rules/schema.js';
+import { headingOf, lineOf, newEntry, parseTermList, serializeTermList, variantsOf, SECTIONS } from '../../lib/index/termlist.js';
+import { LAYOUTS, SORTINGS } from '../../lib/index/format.js';
+import { RANGE_STYLES } from '../../lib/index/ranges.js';
+import { buildTermPassages } from '../../lib/index/terms.js';
+
+export const SAVED_KEY = 'index';
+export const STORE_NAME = 'manuscript-desk-index';
+export const STATUSES = Object.freeze(['proposed', 'accepted', 'dropped']);
+export const DEFAULT_SETTINGS = Object.freeze({ pageOne: '', matchCase: false, layout: 'indented', style: 'chicago', sorting: 'letter-by-letter', collapse: true });
+const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value);
+const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+
+// --- The term list ---
+
+/** Entries read from a file or pasted text are the author's own: accepted. */
+export function entriesFromText(text, existing = []) {
+  const taken = new Set(existing.map(entry => entry.id));
+  const { entries, problems } = parseTermList(text);
+  return { entries: entries.map(entry => ({ ...entry, id: taken.has(entry.id) ? newEntry({ ...entry, id: undefined, taken }).id : entry.id, status: 'accepted' })), problems };
+}
+
+/** Adds entries to a list; one already there (same section, same line) is not added twice. */
+export function addEntries(list, added) {
+  const have = new Set(list.map(entry => `${entry.section}\u0000${entry.text.toLowerCase()}`));
+  const fresh = added.filter(entry => !have.has(`${entry.section}\u0000${entry.text.toLowerCase()}`));
+  return { list: [...list, ...fresh], added: fresh.length, skipped: added.length - fresh.length };
+}
+
+/** The list the author downloads and the index uses: everything not dropped and not still a mere proposal. */
+export const workingList = list => list.filter(entry => entry.status === 'accepted');
+
+export function setStatus(list, ids, status) {
+  if (!STATUSES.includes(status)) return list;
+  const wanted = new Set(ids);
+  return list.map(entry => (wanted.has(entry.id) ? { ...entry, status } : entry));
+}
+
+/** Changes an entry's line, section, subentries or cross-references; returns null when the line has nothing to search. */
+export function editEntry(list, id, { heading, variants, section, subentries, see, seeAlso, ambiguous }) {
+  return list.map(entry => {
+    if (entry.id !== id) return entry;
+    const text = heading === undefined && variants === undefined ? entry.text : lineOf(heading ?? headingOf(entry.text), variants ?? variantsOf(entry.text));
+    return {
+      ...entry,
+      text,
+      ...(section && SECTIONS.includes(section) ? { section } : {}),
+      ...(subentries ? { subentries: subentries.map(line => ({ text: line })).filter(sub => sub.text.trim()) } : {}),
+      ...(see ? { see } : {}),
+      ...(seeAlso ? { seeAlso } : {}),
+      ...(ambiguous === undefined ? {} : { ambiguous: Boolean(ambiguous) }),
+    };
+  });
+}
+
+/** Merges one entry into another: its heading and variants become the other's variants. */
+export function mergeEntries(list, fromId, intoId) {
+  const from = list.find(entry => entry.id === fromId);
+  const into = list.find(entry => entry.id === intoId);
+  if (!from || !into || from === into) return list;
+  const fromHeading = headingOf(from.text);
+  // A name in index order joins as the order the text uses ("Ada Example"), which is what is searched.
+  const parts = from.section === 'names' && fromHeading.includes(',') ? fromHeading.split(',').map(part => part.trim()) : null;
+  const asSearched = parts && parts.length >= 2 ? `${parts.slice(1).join(' ')} ${parts[0]}` : fromHeading;
+  const variants = [...variantsOf(into.text), asSearched, ...variantsOf(from.text)];
+  const merged = {
+    ...into,
+    text: lineOf(headingOf(into.text), variants),
+    subentries: [...into.subentries, ...from.subentries.filter(sub => !into.subentries.some(have => have.text === sub.text))],
+    see: [...new Set([...into.see, ...from.see])],
+    seeAlso: [...new Set([...into.seeAlso, ...from.seeAlso])],
+    ambiguous: into.ambiguous || from.ambiguous,
+    count: (into.count ?? 0) + (from.count ?? 0),
+    quotes: [...(into.quotes ?? []), ...(from.quotes ?? [])].slice(0, 3),
+  };
+  return list.filter(entry => entry.id !== fromId).map(entry => (entry.id === intoId ? merged : entry));
+}
+
+export const termListFile = list => ({ name: 'term-list.txt', text: serializeTermList(workingList(list)) });
+
+// --- Plans said before a helper runs ---
+
+export function termsPlan(paragraphs, left) {
+  const passages = buildTermPassages(paragraphs, { left });
+  return { calls: passages.length, text: `${plural(passages.length, 'model call', 'model calls')}, one per passage of about 9,000 characters${left.size ? `; ${plural(left.size, 'paragraph', 'paragraphs')} of bibliography left out` : ''}.` };
+}
+
+// --- The index the author gets ---
+
+/**
+ * The entries as the index prints them, from the match and the author's choices: pages where every
+ * hit was dropped by an applied decision are left out; a page goes to a subentry when the
+ * subentry's own words are on it or an applied sorting puts a hit there, and then not under the
+ * heading itself.
+ * @param {object[]} list the working list
+ * @param {Map<string, { pages: string[], hits: object[], subentryPages: string[][] }>} byEntry
+ * @param {{ decisions?: Record<string, { keep: boolean }>, overrides?: Record<string, boolean>, appliedJudge?: Record<string, boolean>,
+ *   assignments?: Record<string, number|null>, appliedSorting?: Record<string, boolean> }} choices
+ */
+export function indexEntries(list, byEntry, { decisions = {}, overrides = {}, appliedJudge = {}, assignments = {}, appliedSorting = {} } = {}) {
+  return list.map(entry => {
+    const found = byEntry.get(entry.id) ?? { pages: [], hits: [], subentryPages: [] };
+    const keep = hit => (hit.id in overrides ? overrides[hit.id] : !(appliedJudge[entry.id] && decisions[hit.id]?.keep === false));
+    const pages = found.pages.filter(page => {
+      const onPage = found.hits.filter(hit => hit.page === page);
+      return !onPage.length || onPage.some(keep);
+    });
+    const subPages = (entry.subentries ?? []).map((_, at) => new Set((found.subentryPages?.[at] ?? []).filter(page => pages.includes(page))));
+    if (appliedSorting[entry.id]) {
+      for (const hit of found.hits) {
+        const at = assignments[hit.id];
+        if (Number.isInteger(at) && subPages[at] && pages.includes(hit.page) && keep(hit)) subPages[at].add(hit.page);
+      }
+    }
+    const placed = new Set(subPages.flatMap(set => [...set]));
+    return {
+      id: entry.id,
+      heading: headingOf(entry.text),
+      pages: pages.filter(page => !placed.has(page)),
+      subentries: (entry.subentries ?? []).map((sub, at) => ({ heading: headingOf(sub.text), pages: pages.filter(page => subPages[at].has(page)) })),
+      see: entry.see ?? [],
+      seeAlso: entry.seeAlso ?? [],
+    };
+  });
+}
+
+// --- The conventions from a Formatter rule sheet ---
+
+const SLOT_SETTING = { 'index.layout': ['layout', 'layout', LAYOUTS], 'index.page-ranges': ['style', 'style', RANGE_STYLES], 'index.sorting': ['sorting', 'order', SORTINGS] };
+
+/** Reads a rule sheet file for its index settings. */
+export function settingsFromSheet(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return { ok: false, message: 'This is not a rule sheet file.' }; }
+  if (!isObject(data) || data.version !== SHEET_VERSION) return { ok: false, message: 'This is not a rule sheet file from this version of the Formatter.' };
+  const result = validateSheet(data);
+  if (!result.ok) return { ok: false, message: 'This rule sheet file is damaged and cannot be used.' };
+  const settings = {};
+  const found = [];
+  for (const rule of result.sheet.rules) {
+    const slot = SLOT_SETTING[rule.slot];
+    if (!slot || rule.enabled === false || rule.conflict === true) continue;
+    const [setting, param, allowed] = slot;
+    if (allowed.includes(rule.params?.[param])) { settings[setting] = rule.params[param]; found.push(rule.slot); }
+  }
+  return { ok: true, settings, found };
+}
+
+// --- What this browser keeps ---
+
+const savedEntry = ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages }) => ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages });
+
+/**
+ * The work kept in this browser: the term list (without the quotations from the manuscript), the
+ * passages already answered (their proposals without quotations), the PDF's name, hash and page
+ * count, the settings, the page ranges (numbers and kinds, not their headings), and the helpers'
+ * decisions (keep or drop, the subentry chosen; not the model's reasons).
+ */
+export function savedState(state) {
+  return {
+    entries: state.entries.map(savedEntry),
+    proposing: state.proposing ? {
+      hash: state.proposing.hash,
+      name: state.proposing.name,
+      answered: Object.fromEntries(Object.entries(state.proposing.answered).map(([key, answer]) => [key, { unverified: answer.unverified, proposals: answer.proposals.map(({ quote, ...rest }) => rest) }])),
+    } : null,
+    pdf: state.pdf ? { name: state.pdf.name, hash: state.pdf.hash, pages: state.pdf.pages } : null,
+    settings: { ...state.settings },
+    ranges: state.ranges.map(({ kind, first, last, on, cut }) => ({ kind, first, last, on, ...(Number.isInteger(cut) ? { cut } : {}) })),
+    manualRanges: state.manualRanges,
+    decisions: Object.fromEntries(Object.entries(state.decisions).map(([id, answer]) => [id, { keep: answer.keep }])),
+    overrides: { ...state.overrides },
+    appliedJudge: { ...state.appliedJudge },
+    assignments: { ...state.assignments },
+    appliedSorting: { ...state.appliedSorting },
+  };
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+const boolMap = value => (isObject(value) ? Object.fromEntries(Object.entries(value).filter(([, v]) => typeof v === 'boolean')) : {});
+
+/** The saved work, checked: anything that does not fit is left out. */
+export function restoredState(saved) {
+  if (!isObject(saved)) return {};
+  const text = typeof saved.entries === 'object' ? serializeTermList((saved.entries ?? []).filter(entry => isObject(entry) && typeof entry.text === 'string')) : '';
+  const parsed = parseTermList(text).entries;
+  // The file syntax checks the lines; the saved fields not in it are taken from the saved entry in the same order.
+  const kept = (Array.isArray(saved.entries) ? saved.entries : []).filter(entry => isObject(entry) && typeof entry.text === 'string');
+  const entries = parsed.map(entry => {
+    const own = kept.find(item => item.section === entry.section && item.text === entry.text) ?? {};
+    return { ...entry, id: typeof own.id === 'string' && /^e\d+$/.test(own.id) ? own.id : entry.id, status: pick(own.status, STATUSES, 'accepted'), ...(typeof own.kind === 'string' ? { kind: own.kind } : {}), ...(Number.isInteger(own.count) ? { count: own.count } : {}), ...(Number.isInteger(own.countLeftOut) ? { countLeftOut: own.countLeftOut } : {}) };
+  });
+  const settings = isObject(saved.settings) ? {
+    pageOne: typeof saved.settings.pageOne === 'string' && /^\d{0,5}$/.test(saved.settings.pageOne) ? saved.settings.pageOne : '',
+    matchCase: saved.settings.matchCase === true,
+    layout: pick(saved.settings.layout, LAYOUTS, DEFAULT_SETTINGS.layout),
+    style: pick(saved.settings.style, RANGE_STYLES, DEFAULT_SETTINGS.style),
+    sorting: pick(saved.settings.sorting, SORTINGS, DEFAULT_SETTINGS.sorting),
+    collapse: saved.settings.collapse !== false,
+  } : { ...DEFAULT_SETTINGS };
+  const proposing = isObject(saved.proposing) && HEX64.test(saved.proposing.hash ?? '') && isObject(saved.proposing.answered)
+    ? { hash: saved.proposing.hash, name: String(saved.proposing.name ?? ''), answered: Object.fromEntries(Object.entries(saved.proposing.answered).filter(([, answer]) => isObject(answer) && Array.isArray(answer.proposals))) }
+    : null;
+  const pdf = isObject(saved.pdf) && HEX64.test(saved.pdf.hash ?? '') && Number.isInteger(saved.pdf.pages) ? { name: String(saved.pdf.name ?? ''), hash: saved.pdf.hash, pages: saved.pdf.pages } : null;
+  const ranges = Array.isArray(saved.ranges) ? saved.ranges.filter(range => isObject(range) && Number.isInteger(range.first) && Number.isInteger(range.last) && typeof range.kind === 'string').map(range => ({ kind: range.kind, first: range.first, last: range.last, on: range.on === true, heading: '', ...(Number.isInteger(range.cut) ? { cut: range.cut } : {}) })) : [];
+  const decisions = isObject(saved.decisions) ? Object.fromEntries(Object.entries(saved.decisions).filter(([, answer]) => isObject(answer) && typeof answer.keep === 'boolean').map(([id, answer]) => [id, { keep: answer.keep, reason: '' }])) : {};
+  const assignments = isObject(saved.assignments) ? Object.fromEntries(Object.entries(saved.assignments).filter(([, at]) => at === null || Number.isInteger(at))) : {};
+  return { entries, settings, proposing, pdf, ranges, manualRanges: typeof saved.manualRanges === 'string' ? saved.manualRanges.slice(0, 200) : '', decisions, overrides: boolMap(saved.overrides), appliedJudge: boolMap(saved.appliedJudge), assignments, appliedSorting: boolMap(saved.appliedSorting) };
+}

@@ -127,6 +127,16 @@ test('the Formatter page is served from the real build, with the slash-less path
       assert.equal(asset.status, 200, path);
       assert.match(asset.headers.get('content-type'), type, path);
     }
+    // The Index Builder's page, its script and its PDF worker.
+    const indexPage = await worker.runtime.dispatchFetch(`${base}/index/`, { headers, redirect: 'manual' });
+    assert.equal(indexPage.status, 200);
+    assert.match(await indexPage.text(), /<title>Index Builder \| Manuscript Desk \| CUNY AI Lab<\/title>/);
+    for (const path of ['/index/app.js', '/index/index-worker.js']) {
+      const asset = await worker.runtime.dispatchFetch(`${base}${path}`, { headers, redirect: 'manual' });
+      await asset.arrayBuffer();
+      assert.equal(asset.status, 200, path);
+      assert.match(asset.headers.get('content-type'), /javascript/, path);
+    }
     // The MuPDF licence is a file with no extension; it is served, not redirected.
     const licence = await worker.runtime.dispatchFetch(`${base}/vendor/mupdf/LICENSE`, { headers, redirect: 'manual' });
     const licenceText = await licence.text();

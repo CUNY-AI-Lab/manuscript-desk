@@ -16,11 +16,13 @@ const done = request => new Promise((resolve, reject) => {
 // readable time counts as saved at time 0, so it never keeps the work alive.
 const newestSave = records => (records.length ? Math.max(...records.map(record => (Number.isFinite(record?.savedAt) ? record.savedAt : 0))) : null);
 
-export function createStore({ indexedDB, now = Date.now }) {
+// `name` gives a tool its own database, so its saved work has its own 24-hour clock and its own
+// "Delete saved work now" (the Index Builder's is `manuscript-desk-index`).
+export function createStore({ indexedDB, now = Date.now, name = DB_NAME }) {
   let opening = null;
   function open() {
     opening ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, 1);
+      const request = indexedDB.open(name, 1);
       request.onupgradeneeded = () => request.result.createObjectStore(STORE);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);

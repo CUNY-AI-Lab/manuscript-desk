@@ -178,3 +178,21 @@ footer { background: white; border-top: 1px solid var(--border-gray); font-size:
 .opt-in { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; }
 .opt-in input { margin-top: 3px; }
 .opt-in label { margin: 0; font-weight: 600; }
+
+/* The Index Builder */
+.term-counts { font-weight: 600; }
+.term-list { list-style: none; margin: 1rem 0; padding: 0; }
+.term-row { border-top: 1px solid #d8d8d8; padding: 0.6rem 0; }
+.term-row.dropped .term-heading, .term-row.dropped .term-variants { text-decoration: line-through; color: #666; }
+.term-main { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.term-main input[type=text] { width: auto; flex: 1 1 12rem; }
+.term-main .term-variants { flex: 2 1 14rem; }
+.term-status { font-size: 0.85rem; min-width: 5.5rem; color: #444; }
+.term-details summary { cursor: pointer; font-size: 0.9rem; }
+.term-quotes { font-size: 0.9rem; color: #444; }
+.index-preview { margin-top: 1rem; max-height: 32rem; overflow: auto; border: 1px solid #d8d8d8; padding: 0.75rem 1rem; font-family: Georgia, serif; }
+.index-preview p { margin: 0; }
+.index-letter { font-weight: 700; margin-top: 0.75rem !important; }
+.index-line { padding-left: 1.5em; text-indent: -1.5em; }
+.index-line.sub { padding-left: 3em; }
+mark { background: #fff2a8; }

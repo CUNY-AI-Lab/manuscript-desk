@@ -11,15 +11,17 @@ if (vendored !== version) throw new Error(`web/vendor/mupdf ${vendored ? `is ${v
 
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist/format', { recursive: true });
+await mkdir('dist/index', { recursive: true });
 await mkdir('dist/shared', { recursive: true });
 await cp('web/index.html', 'dist/index.html');
 await cp('web/format/index.html', 'dist/format/index.html');
+await cp('web/index/index.html', 'dist/index/index.html');
 await cp('web/shared/styles.css', 'dist/shared/styles.css');
 await cp('web/shared/cuny-ai-lab-logo.png', 'dist/shared/cuny-ai-lab-logo.png');
 await cp('web/vendor/mupdf', 'dist/vendor/mupdf', { recursive: true });
 await cp('LICENSE', 'dist/LICENSE.txt');
 await build({
-  entryPoints: ['web/format/app.js', 'web/shared/pdf-worker.js', 'web/shared/guidelines-extractors.js'], outbase: 'web', outdir: 'dist',
+  entryPoints: ['web/format/app.js', 'web/index/app.js', 'web/index/index-worker.js', 'web/shared/pdf-worker.js', 'web/shared/guidelines-extractors.js'], outbase: 'web', outdir: 'dist',
   bundle: true, format: 'esm', platform: 'browser', sourcemap: true, target: ['es2022'], minify: false,
   external: ['../vendor/mupdf/*', '../shared/guidelines-extractors.js'],
 });
