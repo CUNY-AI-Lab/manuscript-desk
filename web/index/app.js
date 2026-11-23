@@ -86,7 +86,8 @@ function start() {
     running: null,
   };
   // Held in memory only: the manuscript's paragraphs, the PDF's page texts, the match.
-  const job = { manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: { status: 'all', kind: 'all', search: '', limit: PAGE_SIZE, mergeFrom: null } };
+  // `open`: the groups the author opened, kept open when the page is drawn again.
+  const job = { open: new Set(), manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: { status: 'all', kind: 'all', search: '', limit: PAGE_SIZE, mergeFrom: null } };
   const reader = createReader();
   let store = null;
   try { if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB, name: STORE_NAME }); } catch {}
@@ -230,7 +231,7 @@ function start() {
           el('p', { className: 'review-note', text: `Model: ${state.decisions[hit.id].keep ? 'keep' : 'drop'}${state.decisions[hit.id].reason ? ` (${state.decisions[hit.id].reason})` : ''}` }),
           el('label', { className: 'check' }, el('input', { type: 'checkbox', checked: keep, onchange: event => { state.overrides[hit.id] = event.target.checked; changed(); } }), 'Keep this hit'));
       });
-      return el('details', { className: 'review-chapter' },
+      return el('details', { className: 'review-chapter', open: job.open.has(`judge:${entry.id}`), ontoggle: event => { job.open[event.target.open ? 'add' : 'delete'](`judge:${entry.id}`); } },
         el('summary', { text: `${headingOf(entry.text)}: ${plural(found.hits.length, 'hit', 'hits')}; ${job.match.reasons.get(entry.id).join('; ')}${decided.length ? `; the model proposes dropping ${drops.length}` : ''}${applied ? ' (applied)' : ''}` }),
         decided.length ? el('div', { className: 'row-actions' },
           el('button', { type: 'button', className: 'button secondary', text: applied ? 'Undo the model’s decisions' : 'Apply the model’s decisions', onclick: () => { state.appliedJudge[entry.id] = !applied; for (const hit of found.hits) delete state.overrides[hit.id]; changed(); } })) : null,
@@ -252,7 +253,7 @@ function start() {
       const applied = state.appliedSorting[entry.id] === true;
       const counts = entry.subentries.map((sub, at) => `${headingOf(sub.text)}: ${found.hits.filter(hit => state.assignments[hit.id] === at).length}`);
       const none = found.hits.filter(hit => state.assignments[hit.id] === null).length;
-      return el('details', { className: 'review-chapter' },
+      return el('details', { className: 'review-chapter', open: job.open.has(`sort:${entry.id}`), ontoggle: event => { job.open[event.target.open ? 'add' : 'delete'](`sort:${entry.id}`); } },
         el('summary', { text: `${headingOf(entry.text)}: ${counts.join('; ')}; none ${none}${applied ? ' (applied)' : ''}` }),
         el('div', { className: 'row-actions' }, el('button', { type: 'button', className: 'button secondary', text: applied ? 'Undo the sorting' : 'Apply the sorting', onclick: () => { state.appliedSorting[entry.id] = !applied; changed(); } })),
         el('ul', { className: 'review-list' }, ...found.hits.filter(hit => hit.id in state.assignments).map(hit => el('li', { className: 'review-item' },
