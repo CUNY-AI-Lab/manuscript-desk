@@ -65,7 +65,7 @@ async function mock(context) {
     const marked = n => /⟦([^⟧]+)⟧/.exec(text.split('\n').find(line => line.startsWith(`[${n}]`)) ?? '')?.[1] ?? '';
     const content = task === 'ambiguous'
       ? { decisions: numbers.map(hit => ({ hit, keep: false, reason: 'an exclamation, not the subject', evidence: marked(hit) })) }
-      : { assignments: numbers.map(page => ({ page, subentry: 'S1' })) };
+      : { assignments: numbers.map(n => ({ n, subentry: 'S1' })) };
     return json(route, { request_id: 'r', content: JSON.stringify(content) });
   });
 }

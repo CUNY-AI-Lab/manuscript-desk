@@ -66,15 +66,18 @@ Reply with JSON only, no other text, in this shape, with one decision for every 
 
 For every page, say which subentry the text on it is about, as an indexer would file that page: the number of that subentry, or null when it fits none of them (a passing mention, or the entry in general). Read all the places on a page together: the page goes where its discussion of the entry belongs.
 
-Reply with JSON only, no other text, in this shape, with one assignment for every numbered page:
-{"assignments": [{"page": <number>, "subentry": "S<number>" or null}]}`,
+Reply with JSON only, no other text, in this shape, with one assignment for every numbered page, "n" being the number in square brackets before it (not its page number):
+{"assignments": [{"n": <number>, "subentry": "S<number>" or null}]}`,
 };
 
 export const JUDGE_OUTPUT_TOKENS = 3000;
 // Whether a reasoning model keeps its thinking on, by task. Measured on the dev book (docs/eval/
-// index-loop.md, round 2): with thinking off the ambiguity question agreed less with the hits
-// labelled by hand (34 of 40 against 38) and no more from one run to the next, so both keep it on.
-export const JUDGE_THINKING = Object.freeze({ ambiguous: true, subentries: true });
+// index-loop.md, round 2): with thinking off the ambiguity question gave the same decision in two runs
+// for a little more of the hits (99.2% against 97.8%) but agreed less with the hits labelled by hand
+// (34 of 40 against 39 and 38), so it keeps thinking on. Sorting pages into subentries with thinking
+// off filed 84.2% of the hits as the index does (78.9% in round 1, hit by hit with thinking on), at a
+// tenth of the cost and with no call running out of room, so it is off.
+export const JUDGE_THINKING = Object.freeze({ ambiguous: true, subentries: false });
 
 /** The chat payload for one batch of hits, exactly as POST /api/index/judge sends it (`thinking`: for the measurement only). */
 export function judgePayload({ model, task, text, row, thinking = JUDGE_THINKING[task] }) {

@@ -89,8 +89,8 @@ test('the subentry question numbers pages, each with the words around its hits, 
   assert.deepEqual(batch.places.map(place => place.length), [4, 1]);
   assert.match(batch.text, /Subentries:\n\[S1\] speeches\n\[S2\] floods\nPages found:\n\[1\] p\. 1: .*⟦Rome⟧.*\n\[2\] p\. 2: ⟦Rome⟧ flooded\./);
   assert.ok(pageLine(1, hits.slice(0, 4)).split(' / ').length <= PAGE_CONTEXTS);
-  const sorted = parseAssignments(JSON.stringify({ assignments: [{ page: 1, subentry: 'S1' }, { page: 2, subentry: null }, { page: 3, subentry: 'S1' }] }), batch, 2);
-  assert.deepEqual([...sorted.values()], [0, 0, 0, 0, null]);
+  const sorted = parseAssignments(JSON.stringify({ assignments: [{ n: 1, subentry: 'S1' }, { n: 2, subentry: null }, { n: 3, subentry: 'S1' }, { page: 2, subentry: 'S2' }] }), batch, 2);
+  assert.deepEqual([...sorted.values()], [0, 0, 0, 0, null], 'a printed page number is never taken for a place');
   assert.deepEqual([...parseAssignments(JSON.stringify({ assignments: [{ hit: 2, subentry: 'S7' }] }), batch, 2).values()], [], 'an unknown subentry is no answer');
 });
 
@@ -108,7 +108,7 @@ test('runJudge collects decisions by hit id and sorting by subentry', async () =
   const { byEntry } = findHits(BOOK, entries);
   const callJudge = async ({ task, text }) => ({ content: task === 'ambiguous'
     ? JSON.stringify({ decisions: [...text.matchAll(/^\[(\d+)\]/gm)].map(match => ({ hit: Number(match[1]), keep: !/⟦bush⟧/.test(text.split('\n').find(line => line.startsWith(`[${match[1]}]`))), reason: 'checked', evidence: 'bush grew' })) })
-    : JSON.stringify({ assignments: [{ page: 1, subentry: 'S1' }] }) });
+    : JSON.stringify({ assignments: [{ n: 1, subentry: 'S1' }] }) });
   const judged = await runJudge({ task: 'ambiguous', entries: [entries[1]], byEntry, model: 'm', callJudge, wait: noWait });
   assert.deepEqual([...judged.answers.values()].map(answer => answer.keep), [true, false, true]);
   const sorted = await runJudge({ task: 'subentries', entries, byEntry, model: 'm', callJudge, wait: noWait });
