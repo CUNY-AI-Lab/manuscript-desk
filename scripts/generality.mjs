@@ -8,7 +8,7 @@
 // Results go to stdout only: counts, timings, cost and the names of missed expected rules. It never
 // prints or writes guideline text, extracted quotations or rule statements, and never prints the key.
 
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,7 @@ const RULES_OUTPUT_TOKENS = 6000;
 const REQUEST_TIMEOUT_MS = 180000;
 const CATALOG_TIMEOUT_MS = 10000;
 const SUPPORTED = new Set(['.pdf', '.docx', '.html', '.txt']);
+export const MAX_TEXT_FILE_BYTES = 5000000;
 const DEFAULT_DOC_TYPE = 'monograph';
 const DEFAULT_FOLDER = fileURLToPath(new URL('../../manuscript-desk-guidelines', import.meta.url));
 
@@ -75,8 +76,9 @@ export function passes(results) {
 // ---------------------------------------------------------------------------------------------
 // HTML
 
-const DROPPED_ELEMENTS = /<(script|style|nav|header|footer)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const BLOCK_TAGS = /<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|figcaption|figure|h[1-6]|hr|li|main|ol|p|pre|section|table|td|th|tr|ul)\b[^>]*>/gi;
+const DROPPED_ELEMENTS = new Set(['script', 'style', 'nav', 'header', 'footer']);
+const BLOCK_ELEMENTS = new Set(['address', 'article', 'aside', 'blockquote', 'br', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'main', 'ol', 'p', 'pre', 'section', 'table', 'td', 'th', 'tr', 'ul']);
+const NAME_CHAR = /[A-Za-z0-9]/;
 const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', hellip: '…', shy: '­' };
 
 function decodeEntity(entity, body) {
@@ -87,17 +89,65 @@ function decodeEntity(entity, body) {
   return NAMED_ENTITIES[body.toLowerCase()] ?? entity;
 }
 
+// The name of the tag opening at `at` ('<' or '</' then letters and digits, lower-cased) and
+// whether it closes, or null when no name follows.
+function tagAt(lower, at) {
+  const closing = lower[at + 1] === '/';
+  let end = at + (closing ? 2 : 1);
+  const start = end;
+  while (end < lower.length && NAME_CHAR.test(lower[end])) end += 1;
+  return end > start ? { name: lower.slice(start, end), closing } : null;
+}
+
+// Where the element `name` whose content starts at `from` ends: just past its closing tag, or the
+// end of the input when it is never closed.
+function endOfElement(lower, name, from) {
+  const closing = `</${name}`;
+  for (let at = lower.indexOf(closing, from); at !== -1; at = lower.indexOf(closing, at + 1)) {
+    if (NAME_CHAR.test(lower[at + closing.length] ?? '')) continue;
+    const close = lower.indexOf('>', at + closing.length);
+    return close === -1 ? lower.length : close + 1;
+  }
+  return lower.length;
+}
+
 /**
  * The text of an HTML page: script, style, nav, header and footer elements and comments removed,
  * block elements turned into line breaks, all other tags dropped and common entities decoded.
+ * One pass, linear in the input: an unterminated tag, comment or dropped element runs to the end.
  * @param {string} html
  */
 export function htmlToText(html) {
-  return String(html)
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(DROPPED_ELEMENTS, ' ')
-    .replace(BLOCK_TAGS, '\n')
-    .replace(/<[^>]*>/g, '')
+  const source = String(html);
+  // Lower-cased for matching tag names; only ASCII letters change, so positions stay aligned.
+  const lower = source.replace(/[A-Z]+/g, letters => letters.toLowerCase());
+  const parts = [];
+  let at = 0;
+  while (at < source.length) {
+    const open = source.indexOf('<', at);
+    if (open === -1) {
+      parts.push(source.slice(at));
+      break;
+    }
+    parts.push(source.slice(at, open));
+    if (source.startsWith('<!--', open)) {
+      const close = source.indexOf('-->', open + 4);
+      parts.push(' ');
+      at = close === -1 ? source.length : close + 3;
+      continue;
+    }
+    const close = source.indexOf('>', open + 1);
+    const tagEnd = close === -1 ? source.length : close + 1;
+    const tag = tagAt(lower, open);
+    if (tag && !tag.closing && DROPPED_ELEMENTS.has(tag.name)) {
+      parts.push(' ');
+      at = tagEnd >= source.length ? source.length : endOfElement(lower, tag.name, tagEnd);
+      continue;
+    }
+    if (tag && BLOCK_ELEMENTS.has(tag.name)) parts.push('\n');
+    at = tagEnd;
+  }
+  return parts.join('')
     .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, decodeEntity)
     .replace(/[^\S\n]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
@@ -202,7 +252,7 @@ const isText = value => typeof value === 'string' && value.trim() !== '';
 const toPosix = relative => relative.split(path.sep).join('/');
 
 // The problems of one expected.json, as short descriptions (empty when it is valid).
-function checkExpected(value, dir) {
+export function checkExpected(value, dir) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return ['must be a JSON object'];
   const problems = [];
   if (!DOC_TYPES.includes(value.docType)) problems.push(`docType must be one of ${DOC_TYPES.join(', ')}`);
@@ -295,14 +345,16 @@ function nodeExtractors() {
 }
 
 // One file's text, through the same checks the product applies, or the code of why it was not read.
-async function readCaseFile(file) {
+// An .html or .txt file larger than MAX_TEXT_FILE_BYTES is refused before it is read.
+export async function readCaseFile(file) {
+  const extension = path.extname(file).toLowerCase();
   let bytes;
   try {
+    if ((extension === '.html' || extension === '.txt') && (await stat(file)).size > MAX_TEXT_FILE_BYTES) return { ok: false, code: 'too_long' };
     bytes = new Uint8Array(await readFile(file));
   } catch (error) {
     return { ok: false, code: error?.code === 'ENOENT' ? 'missing' : 'unreadable' };
   }
-  const extension = path.extname(file).toLowerCase();
   if (extension === '.pdf' || extension === '.docx') return readGuidelines({ name: path.basename(file), bytes }, await nodeExtractors());
   const text = new TextDecoder('utf-8').decode(bytes);
   if (extension === '.html') return cleanPastedText(htmlToText(text));

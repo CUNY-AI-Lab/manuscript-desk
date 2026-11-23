@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCallRules, htmlToText, passes, rulesPayload, scoreSheet } from '../scripts/generality.mjs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { MAX_TEXT_FILE_BYTES, checkExpected, createCallRules, htmlToText, passes, readCaseFile, rulesPayload, scoreSheet } from '../scripts/generality.mjs';
 import { createHandler } from '../server/worker.js';
 import { ORIGIN, env, signed } from './helpers.mjs';
 
@@ -71,6 +74,48 @@ test('htmlToText drops script, style and navigation and keeps paragraph text', (
   for (const dropped of ['color: red', 'secret', 'Press home', 'Journals', 'hidden', 'alert', 'Copyright', '<', '>']) assert.ok(!text.includes(dropped), dropped);
   // Paragraphs stay apart.
   assert.match(text, /manuscript\s*\n+\s*Use double/);
+});
+
+test('htmlToText is linear on unclosed or stray markup', () => {
+  for (const [label, html] of [['<', '<'.repeat(200000)], ['<!--', '<!--'.repeat(50000)], ['<nav>', '<nav>'.repeat(50000)], ['</p', 'a</p'.repeat(50000)]]) {
+    const start = performance.now();
+    htmlToText(`<p>Kept text before the markup.</p>${html}`);
+    const elapsed = performance.now() - start;
+    assert.ok(elapsed < 1000, `${label}: ${elapsed.toFixed(0)} ms`);
+  }
+});
+
+test('htmlToText drops everything after an unterminated tag, comment or dropped element', () => {
+  assert.equal(htmlToText('<p>Use footnotes.</p><script>var a = 1; <p>Not text</p>'), 'Use footnotes.');
+  assert.equal(htmlToText('<p>Use footnotes.</p><!-- never closed <p>Not text</p>'), 'Use footnotes.');
+  assert.equal(htmlToText('<p>Use footnotes.</p><div class="x'), 'Use footnotes.');
+  // Tag names match in any case, and a closed dropped element ends at its closing tag.
+  assert.equal(htmlToText('<P>Use footnotes.</P><NAV>Menu</NAV ><p>Cite sources.</p>'), 'Use footnotes.\n\nCite sources.');
+});
+
+test('readCaseFile refuses an .html or .txt file over the size cap before reading it', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'generality-test-'));
+  try {
+    const sentence = 'Please use double quotation marks for all quotations. ';
+    const big = 'x'.repeat(MAX_TEXT_FILE_BYTES + 1);
+    await writeFile(path.join(dir, 'big.txt'), big);
+    await writeFile(path.join(dir, 'big.html'), big);
+    await writeFile(path.join(dir, 'ok.txt'), sentence.repeat(10));
+    assert.deepEqual(await readCaseFile(path.join(dir, 'big.txt')), { ok: false, code: 'too_long' });
+    assert.deepEqual(await readCaseFile(path.join(dir, 'big.html')), { ok: false, code: 'too_long' });
+    assert.deepEqual(await readCaseFile(path.join(dir, 'ok.txt')), { ok: true, text: sentence.repeat(10).trim() });
+    assert.deepEqual(await readCaseFile(path.join(dir, 'gone.txt')), { ok: false, code: 'missing' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('checkExpected refuses files outside the case folder', () => {
+  const expected = files => ({ docType: 'monograph', files, rules: [{ name: 'footnotes', any: ['footnotes'] }] });
+  assert.deepEqual(checkExpected(expected(['guide.pdf', 'style/notes.docx', './page.html']), 'press'), []);
+  for (const file of ['../x', '/etc/hosts', 'sub/..', 'a/../../x']) {
+    assert.deepEqual(checkExpected(expected(['guide.pdf', file]), 'press'), ['files[1] must name a file inside the folder'], file);
+  }
 });
 
 // A Gateway reply in the OpenAI chat shape.
