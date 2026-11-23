@@ -3,9 +3,12 @@
 // output. All text is invented for the tests.
 //   manuscript.docx        two chapters typed with direct formatting and no styles
 //   manuscript-other.docx  the same with typed heading numbers: another file, with other contents
+//   dissertation.docx      an invented dissertation (tests/dissertation-fixture.mjs)
 import { writeFileSync } from 'node:fs';
 import { manuscript } from '../manuscript-fixture.mjs';
+import { dissertation } from '../dissertation-fixture.mjs';
 
 const here = name => new URL(name, import.meta.url);
 writeFileSync(here('manuscript.docx'), manuscript().bytes);
 writeFileSync(here('manuscript-other.docx'), manuscript({ typedNumbers: true }).bytes);
+writeFileSync(here('dissertation.docx'), dissertation().bytes);

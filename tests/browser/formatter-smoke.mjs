@@ -14,6 +14,8 @@ import { readDocx } from '../../lib/docx/read.js';
 import { validateDocx } from '../../lib/docx/validate.js';
 import { buildOutputs } from '../../web/format/output-state.js';
 import { RULES, manuscript, sheetWith } from '../manuscript-fixture.mjs';
+import { dissertation } from '../dissertation-fixture.mjs';
+import { presetSheet } from '../../lib/presets/index.js';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const { chromium } = playwright.default ?? playwright;
@@ -589,6 +591,55 @@ try {
   await page8.locator('#error-banner', { hasText: 'notes.docx: This is not a Word (.docx) file.' }).waitFor();
   log('a file that is not a Word file gets the reader\'s plain message');
   await context8.close();
+
+  // ---- A dissertation: the built-in requirements, read by no model, then a manuscript to the end ----
+  const contextD = await browser.newContext({ acceptDownloads: true });
+  const callsD = await mock(contextD, route => json(route, { request_id: 'r', content: '{"rules":[]}' }));
+  const { roles: ROLES_D } = dissertation();
+  await contextD.route('**/manuscript/api/roles', route => {
+    const body = JSON.parse(route.request().postData());
+    return json(route, { request_id: 'r', content: JSON.stringify({ roles: Object.fromEntries(labelLines(body.passage).map(index => [index, ROLES_D[index] ?? 'body'])) }) });
+  });
+  const pageD = await contextD.newPage();
+  watch(pageD);
+  await pageD.goto(pageUrl);
+  await pageD.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  assert.equal(await pageD.locator('#built-in-controls').isHidden(), true, 'no built-in set before a dissertation is chosen');
+  await pageD.getByLabel('Dissertation or thesis').check();
+  await pageD.locator('#built-in-controls').waitFor();
+  assert.equal(await pageD.getByLabel(/CUNY Graduate Center requirements \(built in\)/).isChecked(), true, 'the built-in set is the default');
+  assert.match(await pageD.locator('#built-in-about').textContent(), /Read by hand on 2026-11-23 from .*Check the current requirements before you deposit, and tell the CUNY AI Lab if something has changed/su);
+  assert.ok((await pageD.locator('#built-in-about a').evaluateAll(links => links.map(link => link.href))).every(href => href.startsWith('https://libguides.gc.cuny.edu/')));
+  assert.equal(await pageD.locator('#guidelines-controls').isHidden(), true, 'nothing to upload with the built-in set');
+  await pageD.getByRole('button', { name: 'Use these requirements' }).click();
+  await pageD.locator('#preset-notice').waitFor();
+  const presetRules = presetSheet('cuny-gc').rules.length;
+  assert.equal(await pageD.locator('.rule').count(), presetRules);
+  assert.equal(callsD.length + callsD.settings.length, 0, 'no model was asked');
+  assert.match(await pageD.locator('.rule .rule-source').first().textContent(), /^From the built-in set: “/u);
+  log(`dissertation: the built-in Graduate Center set gave ${presetRules} rules with no model call, each marked as from the built-in set, with its sources and date`);
+  await pageD.getByLabel("Upload another institution's requirements").check();
+  assert.equal(await pageD.locator('#guidelines-controls').isHidden(), false);
+  assert.equal(await pageD.getByRole('button', { name: 'Read the guidelines' }).isVisible(), true);
+  assert.equal(await pageD.locator('.rule').count(), presetRules, 'switching to upload keeps the sheet until a reading replaces it');
+  log('dissertation: the upload choice shows the guidelines controls again');
+  await pageD.setInputFiles('#manuscript-file', join(FIXTURES, 'dissertation.docx'));
+  await pageD.getByRole('button', { name: 'Read the manuscript' }).click();
+  await pageD.locator('#review .review-item').first().waitFor();
+  await pageD.getByRole('button', { name: 'Format the manuscript' }).click();
+  await pageD.locator('#output .downloads button').first().waitFor();
+  const buttonsD = pageD.locator('#output .downloads button');
+  const countD = await buttonsD.count();
+  for (let at = 0; at < countD; at += 1) {
+    const [file] = await Promise.all([pageD.waitForEvent('download'), buttonsD.nth(at).click()]);
+    const path = join(scratch, `d-${file.suggestedFilename()}`);
+    await file.saveAs(path);
+    assert.equal(validateDocx(new Uint8Array(await readFile(path))).ok, true, `${file.suggestedFilename()} passes the structural validator`);
+  }
+  assert.match(await pageD.locator('#output').textContent(), /Accessibility: 8 places \(4 must fix, 3 should fix, 1 to check\)/u);
+  assert.match(await pageD.locator('#output').textContent(), /Alt texts: a template/u);
+  log(`dissertation: formatted in the page with the built-in set; ${countD} downloads, each a valid Word file; the summary counts the accessibility findings`);
+  await contextD.close();
 
   // ---- "Delete saved work now" ----
   const context9 = await browser.newContext();
