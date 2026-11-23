@@ -1,0 +1,29 @@
+{
+  "note": "The formatter's style names (as Word shows them) mapped to the style ids of the hand-formatted reference of the Brill job, for scripts/format-eval.mjs. '(table)' stands for a Word table, '(none)' for a paragraph the formatter left without a style of its own.",
+  "map": {
+    "Body Text": "BodyText",
+    "Body Text First": "BodyTextFirst",
+    "Chapter Label": "ChapterLabel",
+    "heading 1": "Heading1",
+    "Chapter Subtitle": "ChapterSubtitle",
+    "Chapter Author": "ChapterAuthor",
+    "Chapter Affiliation": "ChapterAffiliation",
+    "Epigraph": "Epigraph",
+    "Epigraph Source": "EpigraphSource",
+    "Abstract": "Abstract",
+    "Keywords": "Keywords",
+    "heading 2": "Heading2",
+    "heading 3": "Heading3",
+    "Bibliography Heading": "Heading2",
+    "Bibliography Subheading": "Heading4",
+    "Bibliography": "Bibliography",
+    "Block Quotation": "BlockQuote",
+    "Verse": "Verse",
+    "List Item": "ListPlain",
+    "Table Text": "TableText",
+    "Figure": "FigureMarker",
+    "Figure Marker": "FigureMarker",
+    "Figure Caption": "FigureCaption",
+    "(table)": "(table)"
+  }
+}

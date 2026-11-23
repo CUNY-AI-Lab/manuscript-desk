@@ -42,7 +42,7 @@ Layout:
 
 - `server/worker.js`: the Worker routes.
 - `web/`: the pages. `web/vendor/mupdf/` is written by `npm run vendor`.
-- `lib/`: the browser modules, testable in Node: `guidelines/` and `rules/` (the rule sheet), `docx/` (the manuscript reader) and `roles/` (paragraph roles).
+- `lib/`: the browser modules, testable in Node: `guidelines/` and `rules/` (the rule sheet), `docx/` (the manuscript reader, the package writer and the structural validator), `roles/` (paragraph roles) and `format/` (the formatting stage).
 - `scripts/`: build, vendoring, local test server, release check and the extraction and roles measurements.
 - `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
 
@@ -91,6 +91,18 @@ CAIL_API_KEY=... npm run roles-eval -- --chapters dev [--model <id>] [--case <fo
 ```
 
 A case is a folder under `manuscripts/` in `MANUSCRIPT_DESK_GUIDELINES` with `source.docx` and `gold-roles.json`. The script prints accuracies, counts and confusion tallies only, never manuscript text, and writes nothing to disk. The measured runs, the held-out result and the remaining confusions are in [`docs/eval/brill-loop.md`](docs/eval/brill-loop.md).
+
+## Measuring formatting
+
+`lib/format/format.js` turns a manuscript's `.docx`, its paragraph roles and a rule sheet into a new `.docx` in which structure is carried by named paragraph styles instead of direct formatting: one style per role (with a no-indent variant for the first paragraph after a heading or a quotation, and separate styles for a title block's title, subtitle, author and affiliation), empty spacer paragraphs removed, each chapter its own Word section when notes restart in every chapter, heading numbers through Word numbering and figure placement markers when the sheet asks for them. It keeps runs, note references, links, images, tables, fields and the character formatting that carries meaning, and declares every change to the text with the words it removed and added. `lib/docx/validate.js` checks the structure of the file it writes.
+
+`scripts/format-eval.mjs` measures it against a formatting job done by hand:
+
+```bash
+npm run format-eval -- [--predicted] [--sheet hand|extracted|<file>] [--chapters dev|holdout|all] [--pdf]
+```
+
+A case is a folder under `manuscripts/` in `MANUSCRIPT_DESK_GUIDELINES` with `source.docx`, `gold-roles.json` and the hand-formatted `.docx` in `reference/`. The script formats the source with the gold roles (or, with `--predicted`, roles from the labelling stage) and a rule sheet (`hand` is a short sheet written for the case, `extracted` the product's own extraction from the publisher's guidelines), then prints counts only: paragraphs matched to the reference by their text, style agreement through the committed map in `docs/eval/brill-style-map.json`, sections, words (any change no declaration explains is a failure), the elements carried over, and the validator's result. The output and any model answer are written to the case's `work/` folder and model answers are reused from there, so nothing is paid for twice; model calls, made only when a cache is missing, use the key in `CAIL_API_KEY`. With `--pdf` it also converts the output with LibreOffice, if installed, to see that it opens. The measured runs are in [`docs/eval/brill-loop.md`](docs/eval/brill-loop.md).
 
 ## Licence
 
