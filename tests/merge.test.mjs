@@ -204,6 +204,37 @@ test('does not mutate its arguments and never throws', () => {
   assert.deepEqual(mergeExtracted([doubleQuotes()], []), { rules: [], dropped: 1 });
 });
 
+test('drops and counts a candidate whose quote getter throws', () => {
+  const trap = { ...spelling() };
+  Object.defineProperty(trap, 'quote', { enumerable: true, get() { throw new Error('boom'); } });
+  const { rules, dropped } = mergeExtracted([trap, doubleQuotes()], [G0]);
+  assert.equal(dropped, 1);
+  assert.deepEqual(ids(rules), ['quotations-1']);
+});
+
+test('drops and counts a candidate whose statement getter throws', () => {
+  const trap = { ...footnotes() };
+  Object.defineProperty(trap, 'statement', { enumerable: true, get() { throw new Error('boom'); } });
+  const { rules, dropped } = mergeExtracted([doubleQuotes(), trap], [G0]);
+  assert.equal(dropped, 1);
+  assert.deepEqual(ids(rules), ['quotations-1']);
+});
+
+test('drops and counts a Proxy candidate whose traps throw', () => {
+  const hostile = new Proxy({}, { get() { throw new Error('boom'); }, getPrototypeOf() { throw new Error('boom'); } });
+  const { rules, dropped } = mergeExtracted([hostile, wordFile()], [G0]);
+  assert.equal(dropped, 1);
+  assert.deepEqual(ids(rules), ['files-1']);
+});
+
+test('returns no rules and drops nothing for a candidates argument that is not a readable array', () => {
+  const unreadable = new Proxy([], { get(target, key) { if (key === 'length') throw new Error('boom'); return target[key]; } });
+  for (const bad of [undefined, null, 'rules', 42, {}, { length: 1, 0: doubleQuotes() }, unreadable]) {
+    assert.deepEqual(mergeExtracted(bad, [G0]), { rules: [], dropped: 0 });
+  }
+  assert.deepEqual(mergeExtracted([doubleQuotes()], unreadable), { rules: [], dropped: 1 });
+});
+
 // A small fixture baseline, standing in for a manual's baseline sheet.
 const manual = section => ({ kind: 'manual', manual: 'Chicago 18', section });
 const baseline = () => [
