@@ -52,7 +52,7 @@ const STEPS = ['match', 'ranges', 'judge', 'subentries', 'terms'];
 const KINDS = ['person', 'place', 'organization', 'work', 'event', 'concept'];
 
 const USAGE = `Usage: npm run index-eval -- --book <folder> [--steps ${STEPS.join(',')}] [--model <id>] [--book-index <path>]
-  [--max-judge-hits <n>] [--max-sub-entries <n>] [--judge-runs <n>] [--judge-thinking on|off]
+  [--max-judge-hits <n>] [--max-sub-entries <n>] [--judge-runs <n>] [--judge-thinking on|off] [--sub-thinking on|off]
 
 Reads index-books/<folder> in MANUSCRIPT_DESK_GUIDELINES (default ../manuscript-desk-guidelines).
 Model calls (all steps but match, and match's first run, which sorts the gold's headings into
@@ -87,8 +87,9 @@ export function goldLine(heading, kind) {
 
 // --- Model calls with a cache ---
 
-function createCalls({ key, rows, usage, work, judgeThinking = null }) {
-  const thinkingOf = task => (task === 'ambiguous' && judgeThinking !== null ? judgeThinking : JUDGE_THINKING[task]);
+function createCalls({ key, rows, usage, work, judgeThinking = null, subThinking = null }) {
+  const override = { ambiguous: judgeThinking, subentries: subThinking };
+  const thinkingOf = task => (override[task] ?? JUDGE_THINKING[task]);
   const cacheFile = path.join(work, 'index-answers.json');
   let cache = null;
   let writing = Promise.resolve();
@@ -290,7 +291,7 @@ function printCurve(out, entries, goldOfEntry, goldCount) {
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { book: { type: 'string' }, steps: { type: 'string' }, model: { type: 'string' }, 'book-index': { type: 'string' }, 'max-judge-hits': { type: 'string' }, 'max-sub-entries': { type: 'string' }, 'judge-runs': { type: 'string' }, 'judge-thinking': { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { book: { type: 'string' }, steps: { type: 'string' }, model: { type: 'string' }, 'book-index': { type: 'string' }, 'max-judge-hits': { type: 'string' }, 'max-sub-entries': { type: 'string' }, 'judge-runs': { type: 'string' }, 'judge-thinking': { type: 'string' }, 'sub-thinking': { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) { err(`${error.message}\n\n${USAGE}`); return 1; }
   if (values.help || !values.book) { (values.help ? out : err)(USAGE); return values.help ? 0 : 1; }
   const steps = (values.steps ?? 'match').split(',').map(step => step.trim());
@@ -309,7 +310,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
 
   const rows = (await readCatalog()) ?? new Map();
   const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
-  const calls = createCalls({ key: environment.CAIL_API_KEY?.trim(), rows, usage, work, judgeThinking: values['judge-thinking'] === undefined ? null : values['judge-thinking'] === 'on' });
+  const calls = createCalls({ key: environment.CAIL_API_KEY?.trim(), rows, usage, work, judgeThinking: values['judge-thinking'] === undefined ? null : values['judge-thinking'] === 'on', subThinking: values['sub-thinking'] === undefined ? null : values['sub-thinking'] === 'on' });
   const started = performance.now();
   const { texts, labels } = extractPdf(mupdf, bytes);
   const { numbers, source } = pageNumbering(texts.length, labels, null);
@@ -442,7 +443,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
     out(`\nSubentries: ${chosen.length} of the ${withSubs.length} entries with subentries; ${plan.hits} hits in ${plan.calls} calls.`);
     const timer = performance.now();
     const sorted = await runJudge({ task: 'subentries', entries: subEntries, byEntry: found.byEntry, model, callJudge: calls.judge });
-    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${sorted.answers.size} hits sorted, ${sorted.failures.length} failed calls.`);
+    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${sorted.answers.size} hits sorted, ${sorted.failures.length} failed calls${sorted.failures.length ? ` (${[...new Set(sorted.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
     const tally = { right: 0, wrong: 0, offGold: 0, codeRight: 0, codeKnown: 0 };
     chosen.forEach(({ entry }, n) => {
       const made = subEntries[n];
