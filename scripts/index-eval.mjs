@@ -310,7 +310,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
     out(`\nAmbiguity: ${flagged.length} entries marked ambiguous by the tool (${Object.entries(reasonKinds).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind}: ${n}`).join('; ')}); ${chosen.length} with 1 to ${limit} hits judged: ${plan.hits} hits in ${plan.calls} calls.`);
     const timer = performance.now();
     const judged = await runJudge({ task: 'ambiguous', entries: chosen, byEntry: withContext.byEntry, model, callJudge: calls.judge, reasons });
-    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${judged.answers.size} hits decided, ${judged.failures.length} failed calls.`);
+    out(`  ${((performance.now() - timer) / 1000).toFixed(0)} s, ${judged.answers.size} hits decided, ${judged.failures.length} failed calls${judged.failures.length ? ` (${[...new Set(judged.failures.map(failure => failure.code))].join(', ')})` : ''}.`);
     // Hit-level agreement with the index: a hit on a page the index gives for the entry (text or note) should be kept.
     const tally = { keepOnGold: 0, dropOnGold: 0, keepOffGold: 0, dropOffGold: 0 };
     const after = new Map(withContext.byEntry);
@@ -401,9 +401,10 @@ async function main(argv, environment, { out = console.log, err = console.error 
     const goldHits = new Map();
     let matchedProposals = 0;
     const nonGold = [];
+    const matchedPairs = [];
     for (const entry of withVariants) {
       const hits = gold.entries.map((g, at) => (matches(entry, g) ? at : -1)).filter(at => at >= 0);
-      if (hits.length) { matchedProposals += 1; hits.forEach(at => { matchedGold.add(at); goldHits.set(at, (goldHits.get(at) ?? 0) + 1); }); } else nonGold.push(entry);
+      if (hits.length) { matchedProposals += 1; matchedPairs.push([headingOf(entry.text), gold.entries[hits[0]].heading]); hits.forEach(at => { matchedGold.add(at); goldHits.set(at, (goldHits.get(at) ?? 0) + 1); }); } else nonGold.push(entry);
     }
     const duplicates = [...goldHits.values()].reduce((sum, n) => sum + n - 1, 0);
     out(`  gold main entries proposed (recall): ${matchedGold.size}/${gold.entries.length} (${percent(matchedGold.size, gold.entries.length)}); proposals that are gold entries: ${matchedProposals}/${withVariants.length} (${percent(matchedProposals, withVariants.length)}); gold entries matched by more than one proposal (duplicates left): ${duplicates}.`);
@@ -423,6 +424,9 @@ async function main(argv, environment, { out = console.log, err = console.error 
     const sample = nonGold.filter((_, at) => at % step === 0).slice(0, 50).map(entry => ({ heading: headingOf(entry.text), kind: entry.kind, count: entry.count, quote: entry.quotes?.[0] }));
     await writeFile(path.join(work, 'terms-nongold-sample.json'), JSON.stringify(sample, null, 1));
     await writeFile(path.join(work, 'terms-list.txt'), kept.map(entry => entry.text).join('\n'));
+    // A fixed sample of matched pairs, for checking the scoring's matching by hand (kept private).
+    const pairStep = Math.max(1, Math.floor(matchedPairs.length / 30));
+    await writeFile(path.join(work, 'terms-matched-sample.json'), JSON.stringify(matchedPairs.filter((_, at) => at % pairStep === 0).slice(0, 30), null, 1));
     const labelled = await readFile(path.join(work, 'terms-nongold-labels.json'), 'utf8').then(JSON.parse).catch(() => null);
     if (Array.isArray(labelled)) out(`  non-gold sample judged by hand: ${labelled.filter(label => label === 'yes').length} of ${labelled.length} are reasonable index terms anyway.`);
     else out(`  non-gold sample of ${sample.length} written to the case's work folder for judging by hand.`);

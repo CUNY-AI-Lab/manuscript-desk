@@ -27,7 +27,7 @@ const ROUTES = [
   ['/api/index/ranges', { model: 'm-1', pages: PAGES }, 'pages', (row, body) => rangesPayload({ model: 'm-1', pages: body.pages, row })],
 ];
 
-test('each route sends its payload with the text as the user message, thinking on, and logs nothing', async () => {
+test('each route sends its payload with the text as the user message and logs nothing', async () => {
   const row = catalogRow('m-1');
   for (const [path, body, , expected] of ROUTES) {
     const sent = [];
@@ -45,16 +45,17 @@ test('each route sends its payload with the text as the user message, thinking o
     assert.equal((await response.json()).content, '{"entries":[]}');
     assert.deepEqual(sent[0].payload, expected(row, body), path);
     assert.equal(sent[0].payload.reasoning_effort, 'low');
-    assert.deepEqual(sent[0].payload.chat_template_kwargs, { enable_thinking: true });
+    // Thinking is off for proposing terms (it ran out of room before answering) and on for the rest.
+    assert.deepEqual(sent[0].payload.chat_template_kwargs, { enable_thinking: path !== '/api/index/terms' });
     assert.equal(sent[0].headers.get('cookie'), null);
     assert.equal(sent[0].headers.get('x-cail-identity-jwt'), request.headers.get('x-cail-gateway-identity-jwt'));
     assert.deepEqual(logged, [], `${path} logs nothing`);
   }
 });
 
-test('the terms call has the reading check\'s room; the judge call the usual cap', () => {
+test('the terms call has room for its answer with thinking off; the judge call the usual cap', () => {
   const row = catalogRow('m-1');
-  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 20000);
+  assert.equal(termsPayload({ model: 'm-1', passage: PASSAGE, row }).max_tokens, 9000);
   assert.equal(judgePayload({ model: 'm-1', task: 'ambiguous', text: HITS, row }).max_tokens, 10000);
   assert.ok(JUDGE_OUTPUT_TOKENS < 10000);
 });

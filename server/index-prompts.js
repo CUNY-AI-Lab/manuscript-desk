@@ -26,11 +26,13 @@ Reply with JSON only, no other text, in this shape:
 A passage with nothing to index (a list of references, a table of contents) has an empty list.`;
 }
 
-// The expected output of one terms call: some dozens of short entries with their quotations.
+// The expected output of one terms call: some dozens of short entries with their quotations (on
+// the dev book, up to about 65 entries and 3,500 tokens for 9,000 characters of text).
 export const TERMS_OUTPUT_TOKENS = 5000;
-// Proposing entries weighs many small judgments together, so a reasoning model keeps its thinking
-// on; the room is that of the reading check, since a dense passage gives a long answer.
-export const TERMS_MAX_TOKENS = 20000;
+// Whether a reasoning model keeps its thinking on. Measured on the default model with a passage of
+// the dev book (docs/eval/index-loop.md): thinking on used all of 20,000 tokens in 120 s and gave no
+// answer; thinking off answered in 9 s with 1,911 tokens. So it is off.
+export const TERMS_THINKING = false;
 
 /** The chat payload for one passage, exactly as POST /api/index/terms sends it. */
 export function termsPayload({ model, passage, row }) {
@@ -39,7 +41,7 @@ export function termsPayload({ model, passage, row }) {
     temperature: 0,
     response_format: { type: 'json_object' },
     messages: [{ role: 'system', content: termsPrompt() }, { role: 'user', content: passage }],
-    ...modelControls(row, TERMS_OUTPUT_TOKENS, { thinking: true, maxTokens: TERMS_MAX_TOKENS }),
+    ...modelControls(row, TERMS_OUTPUT_TOKENS, { thinking: TERMS_THINKING }),
   };
 }
 
