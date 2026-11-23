@@ -22,7 +22,7 @@ npm run vendor                  # copy MuPDF from node_modules into web/vendor/m
 npm run check                   # vendor, syntax checks, all tests, then the build into dist/
 npm test                        # tests only
 npm run build                   # build dist/ (needs npm run vendor first)
-npm run dev                     # build and serve dist/ at http://127.0.0.1:8000/manuscript/ (pages only, no API)
+npm run dev                     # build, then serve the pages and the Worker's routes at http://127.0.0.1:8787/manuscript/ (see below)
 node scripts/verify-release.mjs # check wrangler.toml keeps the Worker private and bound to the Gateway
 npx wrangler deploy --dry-run --outdir /tmp/cail-manuscript-dry   # offline bundle check
 ```
@@ -42,8 +42,20 @@ Layout:
 
 - `server/worker.js`: the Worker routes.
 - `web/`: the pages. `web/vendor/mupdf/` is written by `npm run vendor`.
-- `scripts/`: build, vendoring, local server, release check and the extraction measurement.
+- `scripts/`: build, vendoring, local test server, release check and the extraction measurement.
 - `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
+
+## Try it locally with real models
+
+```bash
+CAIL_API_KEY=sk-cail-... npm run dev
+```
+
+This builds `dist/` and serves it with the Worker's real routes at `http://127.0.0.1:8787/manuscript/format/` (`PORT` sets another port). The Formatter works as in production: the model menu and allowance load, and reading guidelines makes real model calls through the public CAIL Gateway. Every call is charged to the key in `CAIL_API_KEY`, so it spends the key owner's own model allowance; the allowance shown is that key's.
+
+Sign-in is simulated. The server makes a throwaway signing key when it starts and signs both identity assertions for one fixed local person on every request, so there is no CUNY Login; it drops any credential the browser sends and puts the key on the Gateway calls instead. It listens on 127.0.0.1 only, answers only requests addressed to `localhost` or `127.0.0.1` on its port, and accepts a POST only from its own pages. It logs one line per API request (method, path, status, milliseconds), never a body, and never prints the key. Without `CAIL_API_KEY` the pages are served but model calls fail.
+
+This mode exists only in the dev script (`scripts/dev.mjs`, `scripts/dev-server.mjs`). The deployed Worker is unchanged: it has no key path and accepts no local origin.
 
 ## Measuring rule extraction
 
