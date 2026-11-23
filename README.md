@@ -42,8 +42,32 @@ Layout:
 
 - `server/worker.js`: the Worker routes.
 - `web/`: the pages. `web/vendor/mupdf/` is written by `npm run vendor`.
-- `scripts/`: build, vendoring, local server and release check.
+- `scripts/`: build, vendoring, local server, release check and the extraction measurement.
 - `tests/`: Node tests; fixtures are text written for the tests, never real guidelines or manuscripts. `tests/fixtures/catalog-2026-11-09.json` is a copy of the public Gateway model catalog.
+
+## Measuring rule extraction
+
+`scripts/generality.mjs` measures how well the rule sheet comes out of real publishers' guidelines with real models. It runs the product's own reading, prompt, model controls and extraction code, calls the Gateway at `https://tools.ailab.gc.cuny.edu/v1/chat/completions` directly, and checks each sheet against rules we have written down as expected.
+
+```bash
+CAIL_API_KEY=... npm run generality -- --models glm-5.3,other-model [--only <folder>] [--all [--doc-type article]]
+```
+
+Every call is charged to the key in `CAIL_API_KEY`, so a run spends your own model budget; the script reports the tokens used and their cost from the public model catalog. The key is read only from that variable and never printed.
+
+Real guidelines stay outside the repository. The script reads the folder named by `MANUSCRIPT_DESK_GUIDELINES` (default `../manuscript-desk-guidelines`, next to this checkout), with one subfolder per publisher holding its guideline files (PDF, `.docx`, `.html`, `.txt`), possibly in further subfolders. A subfolder with an `expected.json` is a scored case:
+
+```json
+{
+  "docType": "monograph",
+  "files": ["author-guide.pdf", "style/finalizing.docx"],
+  "rules": [{ "name": "alt texts for all images", "any": ["ALT-texts for all images"] }]
+}
+```
+
+`files` (paths relative to that subfolder) lists the documents read together as one set of guidelines; without it, every supported file directly in the subfolder is used. A rule counts as found when any of its `any` strings occurs, ignoring case, quote style and dashes, in an extracted rule's quotation or statement. A model passes when it finds at least 90 percent of all expected rules and at least 80 percent in every case; the script exits non-zero unless every model passes.
+
+By default only scored cases run. `--all` also runs every other supported file as its own unscored case (a monograph unless `--doc-type` says otherwise), reported with counts only; `--only <folder>` runs one subfolder. Output goes to stdout: per model, one row per case with rules kept, left out, expected found, failed calls and seconds, then totals, cost, PASS or FAIL and the names of missed expected rules. It never prints guideline text, quotations or rule statements, and writes nothing to disk.
 
 ## Licence
 
