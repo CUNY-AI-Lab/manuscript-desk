@@ -190,6 +190,39 @@ the highlighting), 1 to check (the strip-shaped "screenshot"). The safe fixes se
 from the title page and marked the bold first row of the other table as a header row. The alt-text
 companion lists the same three pictures, with the one alt text that exists.
 
+### A real thesis (counts only)
+
+No real Graduate Center dissertation `.docx` was available. The one real thesis on this machine that
+could be used is the owner's own master's thesis from an Italian university (its title page in
+Italian, its text in English; 3,225 paragraphs, 20 pictures, 11 tables, chapter titles in Word's
+Heading 1 style, A4 pages in 199 sections with uneven margins, page numbers top left). A private copy
+was labelled through the product's own labelling run (109 calls, $0.66 by the script's catalog price,
+no failure; the labels were not reviewed, as a student would in step 5) and formatted with the
+Graduate Center sheet. It is not a Graduate Center dissertation, so this tests the tool on a real file,
+not that file's compliance.
+
+- **Labels**: no paragraph was labelled as a chapter's title block: the chapter titles in Heading 1
+  came out as section headings. With no chapter, the front matter could not be numbered apart, the
+  chapters could not start pages or restart notes, and the formatter left the numbering as it was and
+  said so; this round adds a To-do that names the cause and the fix in step 5. The labelling prompt
+  was not changed for it: a change would have to be measured on the Brill case and this thesis again,
+  and the round stopped paid calls before that (see the spend below).
+- **Applied**: US Letter in all 199 sections, 1-inch margins in all 199, the body double-spaced
+  (1,628 of 1,628 body paragraphs); no word changed undeclared; every download valid.
+- **Not met**: text as small as 4.5 pt (under the 9-pt floor; not applied, flagged by the sheet's rule
+  only as "not checked"); page numbers with a footer distance of 0 and not on the first section; the
+  bibliography's hanging indent (two values, neither 0.5 in).
+- **Parts**: found title page, contents, list of abbreviations, bibliography; reported missing:
+  copyright page, approval page, abstract, list of tables, list of figures (it has both) and the first
+  chapter (from the labels). Title page: reported as lacking the author's name, the statement, the
+  degree and the year: wrong in part, because the reader of title pages assumes the title comes first
+  and this layout puts the university first and the title near the end, with one unlabelled line in
+  between that ends the page early.
+- **Accessibility**: 14 pictures without alt text (must), 6 whose alt text looks machine-written or a
+  file name (check), 8 tables without a header row (must; 2 more were marked by the safe fix), 103
+  paragraphs with highlighting or colour (should), 12 links whose text is a bare address outside the
+  bibliography (check); title set by the safe fix; language present.
+
 ### Accessibility on the Brill manuscript (a real document, counts only)
 
 Gold roles and the hand sheet. Pictures: none (its figures are placement markers). Tables: 4, each a
@@ -230,3 +263,11 @@ report with no quotation check, and the upload of the whole file.
 - The accessibility findings are not scored against a hand job (`todos-eval` does not pass the file's
   facts to the checks), and the image-of-text test is a heuristic (a name or description, a strip
   shape, a picture standing where a table is).
+
+## Spend
+
+By the scripts' catalog prices: extraction $0.54, Brill roles $0.19, the thesis's labels $0.66, about
+$1.39 in all. The Gateway's own figure for the key over its 30-day window was $2.68 used when paid
+calls stopped; that figure includes use of the key before this round (and by any other session using
+it), and no figure for this round alone was available, so paid calls stopped there to stay inside a
+$3 cap on either reading.
