@@ -66,7 +66,7 @@ test('front and back matter belong to no chapter: a chapter ends before them, an
   const plan = planFormatting(paragraphs, roles);
   assert.deepEqual(plan.chapters.map(({ first, last }) => ({ first, last })), [{ first: 10, last: 14 }, { first: 22, last: 24 }], 'the notes, the list after them and the part title are in no chapter');
   const style = index => plan.decisions.get(index).style;
-  assert.deepEqual([0, 1, 2, 3].map(style), ['book-title', 'book-subtitle', 'book-author', 'book-affiliation']);
+  assert.deepEqual([0, 1, 2, 3].map(style), ['book-title', 'book-label', 'book-author', 'book-affiliation'], '"Edited by" is a label wherever it stands');
   assert.deepEqual([5, 7, 8, 16, 17, 18, 19, 21].map(style), ['front-matter-heading', 'contents-entry', 'contents-entry', 'front-matter-heading', 'contributor-note', 'front-matter-heading', 'list-item', 'part-title']);
   assert.equal(style(12), 'body-first');
   // Spacers go from the start of the front matter to the end of the last chapter.
