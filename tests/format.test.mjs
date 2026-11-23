@@ -218,3 +218,26 @@ test('an author line that names the institution in brackets is split from it', (
   const check = wordCheck(run);
   assert.equal(check.removed + check.added, 0, 'the words are the same, now in two paragraphs');
 });
+
+test('style ids, names and values from the document that hold " < & \' > are escaped, never written as markup', () => {
+  const { bytes, roles } = manuscript({ hostile: true });
+  const result = formatDocx({ bytes, roles, sheet: sheetWith([RULES.restart, RULES.numbered]) });
+  assert.equal(result.ok, true);
+  assert.deepEqual(validateDocx(result.bytes).problems, [], 'every style reference still resolves');
+  const hostile = 'Bo"<&\'>dy';
+  const styles = part(result.bytes, 'word/styles.xml');
+  assert.match(styles, /<w:style w:type="paragraph" w:styleId="Bo&quot;&lt;&amp;&apos;&gt;dy"><w:name w:val="Body Text"\/><w:basedOn w:val="Nor&quot;&lt;&amp;&apos;&gt;mal"\/>/, 'the existing Body Text keeps its id; Normal is its base');
+  assert.doesNotMatch(styles, /w:line="480/, 'a line spacing that is not a number is not copied');
+  const body = units(result.bytes).find(unit => unit.text.startsWith('A second paragraph'));
+  assert.equal(body.styleId, hostile);
+  assert.equal(body.styleName, 'Body Text');
+});
+
+test('a part the stage cannot work with is a typed failure, not an exception', () => {
+  const { bytes, roles } = manuscript();
+  const files = unzipSync(bytes);
+  const broken = zipSync({ ...files, 'word/styles.xml': new TextEncoder().encode('<w:styles xmlns:w="x"><unclosed></w:styles>') });
+  assert.deepEqual(Object.keys(formatDocx({ bytes: broken, roles })), ['ok', 'code', 'message']);
+  assert.equal(formatDocx({ bytes: broken, roles }).code, 'unreadable');
+  assert.equal(formatDocx().code, 'not_docx');
+});

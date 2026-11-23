@@ -80,10 +80,22 @@ const FOOTNOTES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:foo
   + `<w:footnote w:id="1"><w:p><w:pPr><w:spacing w:line="480" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>${run(' A first note.')}</w:p></w:footnote>`
   + `<w:footnote w:id="2"><w:p><w:pPr><w:spacing w:line="480" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>${run(' A second note, in the second chapter.')}</w:p></w:footnote></w:footnotes>`;
 
-/** The invented manuscript: { bytes, roles, count }. */
+// Style ids and names holding every character XML treats specially, as a hostile or careless
+// file might, written escaped as the file would hold them.
+const HOSTILE = '&quot;&lt;&amp;\'&gt;';
+const HOSTILE_STYLES = STYLES
+  .replace('w:styleId="Normal"><w:name w:val="Normal"/>', `w:styleId="Nor${HOSTILE}mal"><w:name w:val="Nor${HOSTILE}mal"/>`)
+  .replace('<w:basedOn w:val="Normal"/>', `<w:basedOn w:val="Nor${HOSTILE}mal"/>`)
+  .replace('</w:styles>', `<w:style w:type="paragraph" w:styleId="Bo${HOSTILE}dy"><w:name w:val="Body Text"/></w:style></w:styles>`);
+
+/**
+ * The invented manuscript: { bytes, roles, count }. With `hostile`, its style ids and names and
+ * its line spacing hold quotation marks, angle brackets, ampersands and apostrophes.
+ */
 export function manuscript(options = {}) {
   const list = children(options);
-  const body = list.map(([xml]) => xml).join('');
+  let body = list.map(([xml]) => xml).join('');
+  if (options.hostile) body = body.replaceAll('w:line="480"', `w:line="480${HOSTILE}"`).replace('<w:p><w:pPr>', `<w:p><w:pPr><w:pStyle w:val="Nor${HOSTILE}mal"/>`);
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}</w:body></w:document>`;
   const roles = {};
   list.forEach(([, role], index) => { if (role) roles[index] = role; });
@@ -92,7 +104,7 @@ export function manuscript(options = {}) {
     '_rels/.rels': strToU8(ROOT_RELS),
     'word/document.xml': strToU8(document),
     'word/_rels/document.xml.rels': strToU8(DOCUMENT_RELS),
-    'word/styles.xml': strToU8(STYLES),
+    'word/styles.xml': strToU8(options.hostile ? HOSTILE_STYLES : STYLES),
     'word/footnotes.xml': strToU8(FOOTNOTES),
   });
   return { bytes, roles, count: list.length };

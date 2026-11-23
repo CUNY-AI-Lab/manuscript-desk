@@ -213,6 +213,12 @@ The title block needs no model call: the code reads it right on every matched ti
 All chapters with gold roles and the hand sheet: 1,353 of 1,383 reference paragraphs matched, 99.4%
 style agreement, 46/46 title-block paragraphs.
 
+After the holdout run, one change was made that is not a formatting decision: a review found that
+style definitions were written by putting values from the document (its style ids, its line
+spacing) into XML text. They are now set as attributes, which the writer escapes, and the stage
+returns a typed failure instead of throwing. Re-measured on all chapters, every number above is
+unchanged.
+
 ### Remaining differences (all chapters, gold roles, hand sheet)
 
 | Reference -> tool | Count | Explanation |
