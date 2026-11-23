@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
-import { LOADED_NOTICE, afterRead, droppedNotice, failureLines, failureSentence, loadSheetQuestion, loadedSheetState, removeGuideline, restoredState, savedState } from '../web/format/app.js';
+import { LOADED_NOTICE, afterRead, droppedNotice, manualNotice, failureLines, failureSentence, loadSheetQuestion, loadedSheetState, removeGuideline, restoredState, savedState } from '../web/format/app.js';
 import { splitGuidelines } from '../lib/rules/chunk.js';
 import { newSheet } from '../lib/rules/schema.js';
 import { createStore } from '../web/shared/store.js';
@@ -153,4 +153,12 @@ test('removing a guidelines document leaves a loaded sheet alone', () => {
   const sheet = sheetWith([quoted('quotations-1', 0), author('other-a1')]);
   assert.deepEqual(removeGuideline(guidelines, sheet, 0, { loadedFromFile: true }), { guidelines: [], sheet });
   assert.deepEqual(removeGuideline(guidelines, sheet, 0).sheet.rules.map(rule => rule.id), ['other-a1'], 'a read sheet loses the rules read from it');
+});
+
+test('the named manual says where the name came from', () => {
+  const sheet = { ...sheetWith([]), manual: { id: null, named: 'The Chicago Manual of Style' } };
+  assert.equal(manualNotice(sheet, { loadedFromFile: false }), 'Style manual named in the guidelines: The Chicago Manual of Style');
+  assert.equal(manualNotice(sheet, { loadedFromFile: true }), 'Style manual named in the rule sheet file: The Chicago Manual of Style');
+  assert.equal(manualNotice(sheetWith([]), { loadedFromFile: true }), null, 'no manual, no line');
+  assert.equal(manualNotice(null, { loadedFromFile: false }), null);
 });

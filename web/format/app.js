@@ -175,6 +175,13 @@ export function failureLines(failures, guidelines) {
   });
 }
 
+// The named manual, said to come from the file while the sheet is one loaded from a file, since
+// nothing checked it against the guidelines then; null when the sheet names none.
+export function manualNotice(sheet, { loadedFromFile }) {
+  if (!sheet?.manual.named) return null;
+  return `Style manual named in ${loadedFromFile ? 'the rule sheet file' : 'the guidelines'}: ${sheet.manual.named}`;
+}
+
 export const droppedNotice = n => (n === 1
   ? '1 rule was left out because the tool could not confirm it against the guidelines.'
   : `${n.toLocaleString('en-US')} rules were left out because the tool could not confirm them against the guidelines.`);
@@ -264,7 +271,8 @@ function start() {
     $('sheet-empty').hidden = Boolean(sheet?.rules.length);
     const notices = [];
     if (sheet && state.loadedFromFile) notices.push(el('p', { className: 'notice', id: 'loaded-notice', text: LOADED_NOTICE }));
-    if (sheet?.manual.named) notices.push(el('p', { className: 'notice info', text: `Style manual named in the guidelines: ${sheet.manual.named}` }));
+    const manual = manualNotice(sheet, state);
+    if (manual) notices.push(el('p', { className: 'notice info', text: manual }));
     if (sheet?.dropped > 0) notices.push(el('p', { className: 'notice', id: 'dropped-notice', text: droppedNotice(sheet.dropped) }));
     if (state.failures.length) {
       const groups = [...new Set(state.failures.map(failure => failure.group))].map(group => GROUP_LABELS[group] ?? group);
