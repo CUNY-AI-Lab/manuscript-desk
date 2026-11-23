@@ -7,6 +7,7 @@
 // offers has passed the structural validator. Pure apart from those injected calls, so it loads and
 // is tested under Node; output-step.js draws its result.
 
+import { readAccessibility } from '../../lib/docx/accessibility.js';
 import { addComments } from '../../lib/docx/comments.js';
 import { validateDocx } from '../../lib/docx/validate.js';
 import { formatDocx } from '../../lib/format/format.js';
@@ -70,8 +71,10 @@ export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, prop
   const { report } = formatted;
   let findings, checks, comments, commented, todos;
   let reading = null;
+  // The formatted file's pictures, tables, headings, links and properties, for the accessibility checks.
+  const accessibility = readAccessibility(formatted.bytes);
   try {
-    ({ findings, checks } = runChecks({ paragraphs, roles, report, sheet }));
+    ({ findings, checks } = runChecks({ paragraphs, roles, report, sheet, accessibility }));
   } catch {
     return { ok: false, message: GENERAL_FAILURE };
   }
@@ -112,7 +115,7 @@ export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, prop
       }
     }
   }
-  const companions = companionDocuments({ sheet, report, paragraphs, roles, findings, checks, proposals: running?.proposals ?? new Map() });
+  const companions = companionDocuments({ sheet, report, paragraphs, roles, findings, checks, accessibility, proposals: running?.proposals ?? new Map() });
   const base = baseName(name);
   const files = [
     { id: 'manuscript', label: 'The formatted manuscript, with comments and tracked changes', name: `${base} (formatted).docx`, bytes: commented.bytes },
@@ -139,8 +142,13 @@ export function outputSummary({ report, findings, checks, sheet, comments, revis
   ];
   if (revisions) changed.push(`${plural(revisions, 'change to words is', 'changes to words are')} marked as tracked changes, for you to accept or reject in Word.`);
   const byKind = new Map();
-  for (const finding of findings) if (finding.kind !== 'formatting-summary') byKind.set(finding.kind, (byKind.get(finding.kind) ?? 0) + 1);
+  for (const finding of findings) if (finding.kind !== 'formatting-summary' && !finding.severity) byKind.set(finding.kind, (byKind.get(finding.kind) ?? 0) + 1);
   const flagged = [...byKind].map(([kind, count]) => `${kindLabel(kind)}: ${plural(count, 'place', 'places')}.`);
+  const access = findings.filter(finding => finding.severity);
+  if (access.length) {
+    const tally = severity => access.filter(finding => finding.severity === severity).length;
+    flagged.push(`Accessibility: ${plural(access.length, 'place', 'places')} (${tally('must')} must fix, ${tally('should')} should fix, ${tally('check')} to check), each a comment and an item in the To-dos list's Accessibility section.`);
+  }
   if (reading) flagged.push(`The reading check read the opening of ${plural(reading.chapters, 'chapter', 'chapters')}${reading.matter ? ' and the front matter' : ''} and proposed ${plural(reading.found, 'query', 'queries')} whose quoted words it found in the text; each is a comment marked as a model's proposal, for you to judge.`);
   const supply = toSupply(sheet, findings, checks).map(rule => rule.statement);
   const notes = [];
