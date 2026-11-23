@@ -68,3 +68,17 @@ test('front and back matter spans are checked, measured with dev and all, and sc
   const entries = scoreRoles({ gold: withMatter.gold, predicted, paragraphs, chapters: withMatter.matter, only: role => role === 'contents-entry' });
   assert.deepEqual([entries.scored, entries.correct], [2, 1]);
 });
+
+test('a gold with a scope lists every paragraph of those roles: one predicted with them that it does not list is an error', () => {
+  const gold = { ...GOLD, docType: 'dissertation', scope: ['title-block', 'bibliography-heading'], gold: { 5: 'title-block', 12: 'title-block', 15: 'bibliography-heading' } };
+  assert.deepEqual(checkGold(gold), []);
+  assert.equal(checkGold({ ...gold, docType: 'novel' }).length, 1);
+  assert.equal(checkGold({ ...gold, scope: ['poem'] }).length, 1);
+  const paragraphs = Array.from({ length: 17 }, (_, index) => paragraph(index));
+  const predicted = { 5: 'title-block', 6: 'body', 8: 'title-block', 12: 'heading-1', 15: 'bibliography-heading' };
+  const score = scoreRoles({ gold: gold.gold, predicted, paragraphs, chapters: GOLD.chapters, scope: new Set(gold.scope) });
+  assert.equal(score.scored, 4, 'the three listed and the one out of scope');
+  assert.equal(score.correct, 2);
+  assert.deepEqual([...score.confusions], [['(out of scope)->title-block', 1], ['title-block->heading-1', 1]]);
+  assert.equal(scoreRoles({ gold: gold.gold, predicted, paragraphs, chapters: GOLD.chapters }).scored, 3, 'without a scope, only the gold is scored');
+});

@@ -95,10 +95,11 @@ export function createManuscriptStep(ctx) {
           $('roles-progress-text').textContent = `Reading the manuscript: ${done} of ${plural(total, 'passage', 'passages')} done.`;
         },
       });
-      job.labels = afterLabelling(job.labels, result, { retry });
+      job.labels = afterLabelling(job.labels, result, { retry, paragraphs: job.file.paragraphs, docType: ctx.state.docType });
       job.labels.model = model;
       const left = unlabelledParagraphs(job.file.paragraphs, job.labels).length;
-      announce(`Finished reading the manuscript.${left ? ` ${plural(left, 'paragraph was', 'paragraphs were')} not labelled; they are listed first.` : ''} Check the labels below.`);
+      const found = job.labels.structured ? ` ${plural(job.labels.structured, 'chapter title was', 'chapter titles were')} found from the file's own headings and contents list.` : '';
+      announce(`Finished reading the manuscript.${found}${left ? ` ${plural(left, 'paragraph was', 'paragraphs were')} not labelled; they are listed first.` : ''} Check the labels below.`);
     } catch {
       if (controller.signal.aborted) announce('Stopped. The passages labelled so far are kept in this browser and are not paid for again when you read the manuscript again.');
       else showErrors(['The manuscript could not be read. Try again.']);

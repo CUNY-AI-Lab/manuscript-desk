@@ -3,7 +3,7 @@
 // /api/roles sends, calling the CAIL Gateway with the caller's own key, and scores the roles against
 // a case's hand-set gold roles.
 //
-//   CAIL_API_KEY=... npm run roles-eval -- [--case <folder>] [--model <id>] [--chapters dev|holdout|all|<key,key>] [--save <file>]
+//   CAIL_API_KEY=... npm run roles-eval -- [--case <folder>] [--model <id>] [--chapters dev|holdout|all|<key,key>] [--doc-type <type>] [--cache <file>] [--save <file>]
 //
 // A case is a folder under manuscripts/ in MANUSCRIPT_DESK_GUIDELINES (default
 // ../manuscript-desk-guidelines) holding source.docx and gold-roles.json. The gold may also list
@@ -13,6 +13,12 @@
 // text and never prints the key. Every model answer is cached in the case's work/roles-answers.json
 // (by model, prompt and passage), so a re-score pays for nothing it asked before; --save writes the
 // roles labelled to a file (keep it with the case: it is the case's labelling, not text).
+//
+// For a monograph or a dissertation (--doc-type, or the gold's "docType"), the roles are scored as
+// the model gave them and again after the pass that finds chapter titles from the file's structure
+// (lib/roles/structure.js), as the Formatter page applies it. A gold may set "scope", a list of
+// roles: it then lists every paragraph with one of those roles, and only those, so a paragraph it
+// does not list that is predicted with one of them counts as an error.
 
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -22,6 +28,8 @@ import { parseArgs } from 'node:util';
 import { readDocx } from '../lib/docx/read.js';
 import { labelRoles } from '../lib/roles/label.js';
 import { MATTER, ROLE_IDS, STRUCTURAL } from '../lib/roles/roles.js';
+import { structureRoles } from '../lib/roles/structure.js';
+import { DOC_TYPES } from '../lib/rules/schema.js';
 import { rolesPayload, rolesPrompt } from '../server/prompts.js';
 import { costOf, createGatewayCall, readCatalog, table } from './generality.mjs';
 
@@ -40,6 +48,10 @@ every call.
   --model     model id (default ${DEFAULT_MODEL})
   --chapters  dev, holdout, all (default dev), or chapter keys separated by commas; dev and all
               also measure the gold's spans of front and back matter, if it lists any
+  --doc-type  what the manuscript is (default: the gold's docType); for a monograph or a
+              dissertation, the roles are also scored after the chapter-title pass
+  --cache     keep the model's answers in this file instead of work/roles-answers.json (a file
+              that does not exist yet gives a fresh run that leaves the usual answers alone)
   --save      write the roles labelled, as JSON, to this file`;
 
 const isText = value => typeof value === 'string' && value.trim() !== '';
@@ -57,6 +69,8 @@ export function checkGold(value) {
   else if (!Object.entries(value.gold).every(([key, role]) => /^\d+$/.test(key) && ROLE_IDS.includes(role))) problems.push('gold must map paragraph indices to known roles');
   if (!Array.isArray(value.chapters) || !value.chapters.every(chapter => isText(chapter?.key) && Number.isInteger(chapter.first) && Number.isInteger(chapter.last) && chapter.first <= chapter.last)) problems.push('chapters must list { key, first, last }');
   for (const split of ['dev', 'holdout']) if (!Array.isArray(value[split]) || !value[split].every(isText)) problems.push(`${split} must be a list of chapter keys`);
+  if (value.docType !== undefined && !DOC_TYPES.includes(value.docType)) problems.push(`docType must be one of ${DOC_TYPES.join(', ')}`);
+  if (value.scope !== undefined && !(Array.isArray(value.scope) && value.scope.length && value.scope.every(role => ROLE_IDS.includes(role)))) problems.push('scope must be a list of known roles');
   if (value.matter !== undefined && !(Array.isArray(value.matter) && value.matter.every(span => isText(span?.key) && Number.isInteger(span.first) && Number.isInteger(span.last) && span.first <= span.last))) problems.push('matter must list { key, first, last }');
   return problems;
 }
@@ -89,13 +103,22 @@ export function spansFor(chapters, lead = LEAD) {
 
 /**
  * The score of predicted roles against the gold roles over some chapters. Only gold paragraphs that
- * the reader finds non-empty are scored; a paragraph with no predicted role counts as wrong.
+ * the reader finds non-empty are scored; a paragraph with no predicted role counts as wrong. With
+ * `scope` (a set of roles the gold lists completely), a paragraph the gold does not list that is
+ * predicted with one of those roles is scored too, as "(out of scope)", and is wrong.
  * @returns {{ scored, correct, structural, structuralCorrect, bodyAsStructural, confusions: Map<string, number> }}
  */
-export function scoreRoles({ gold, predicted, paragraphs, chapters, only }) {
+export function scoreRoles({ gold, predicted, paragraphs, chapters, only, scope }) {
   const score = { scored: 0, correct: 0, structural: 0, structuralCorrect: 0, bodyAsStructural: 0, emptySkipped: 0, confusions: new Map() };
   for (const chapter of chapters) {
     for (let index = chapter.first; index <= chapter.last; index += 1) {
+      if (scope && gold[index] === undefined && scope.has(predicted[index]) && paragraphs[index] && !paragraphs[index].hints.empty && (!only || only('(out of scope)'))) {
+        const pair = `(out of scope)->${predicted[index]}`;
+        score.scored += 1;
+        score.structural += 1;
+        score.confusions.set(pair, (score.confusions.get(pair) ?? 0) + 1);
+        continue;
+      }
       const want = gold[index];
       if (want === undefined || (only && !only(want))) continue;
       if (!paragraphs[index] || paragraphs[index].hints.empty) { score.emptySkipped += 1; continue; }
@@ -134,10 +157,43 @@ async function findCase(root, name) {
   return path.join(base, folders[0]);
 }
 
+function report({ out, title, gold, goldRoles, predicted, paragraphs, selected, matter, scope }) {
+  const perChapter = selected.chapters.map(chapter => ({ chapter, score: scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: [chapter], scope }) }));
+  const split = chapter => (gold.dev.includes(chapter.key) ? 'dev' : gold.holdout.includes(chapter.key) ? 'holdout' : '-');
+  const tableRows = perChapter.map(({ chapter, score }) => [`${chapter.key} (${split(chapter)})`, ...row('', score).slice(1)]);
+  const dev = perChapter.filter(({ chapter }) => split(chapter) === 'dev').map(({ score }) => score);
+  const holdout = perChapter.filter(({ chapter }) => split(chapter) === 'holdout').map(({ score }) => score);
+  const total = addScores(perChapter.map(({ score }) => score));
+  if (dev.length) tableRows.push(row('Dev', addScores(dev)));
+  if (holdout.length) tableRows.push(row('Holdout', addScores(holdout)));
+  tableRows.push(row('Total', total));
+
+  out(`\n${title}`);
+  out(table(['Chapter', 'Scored', 'Accuracy', 'Structural', 'Struct. acc.', 'Body as structural'], tableRows));
+  out(`Empty gold paragraphs not scored: ${total.emptySkipped}.`);
+  const confusions = [...total.confusions].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  out(`Confusions (gold->predicted: count), ${confusions.reduce((sum, [, count]) => sum + count, 0)} in all:`);
+  for (const [pair, count] of confusions) out(`  ${pair}: ${count}`);
+  for (const { chapter, score } of perChapter) {
+    if (score.confusions.size) out(`  in ${chapter.key}: ${[...score.confusions].sort((a, b) => b[1] - a[1]).map(([pair, count]) => `${pair} ${count}`).join(', ')}`);
+  }
+  if (matter.length) {
+    // The front and back matter outside the chapters, apart from the chapters' scores.
+    const spans = matter.map(span => ({ span, score: scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: [span], scope }) }));
+    const matterTotal = addScores(spans.map(({ score }) => score));
+    out(`\nFront and back matter outside the chapters (${spans.length} ${spans.length === 1 ? 'span' : 'spans'})`);
+    out(table(['Span', 'Scored', 'Accuracy', 'Structural', 'Struct. acc.', 'Body as structural'], [...spans.map(({ span, score }) => row(span.key, score)), row('Matter', matterTotal)]));
+    const byRole = [...MATTER].map(role => [role, scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: matter, only: want => want === role })]).filter(([, score]) => score.scored > 0);
+    for (const [role, score] of byRole) out(`  ${role}: ${score.correct}/${score.scored}`);
+    const confusionsHere = [...matterTotal.confusions].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    out(`Confusions in the matter: ${confusionsHere.map(([pair, count]) => `${pair}: ${count}`).join(', ') || 'none'}.`);
+  }
+}
+
 async function main(argv, environment, { out = console.log, err = console.error } = {}) {
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, model: { type: 'string' }, chapters: { type: 'string' }, save: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { case: { type: 'string' }, model: { type: 'string' }, chapters: { type: 'string' }, 'doc-type': { type: 'string' }, cache: { type: 'string' }, save: { type: 'string' }, help: { type: 'boolean' } }, strict: true }));
   } catch (error) {
     err(`${error.message}\n\n${USAGE}`);
     return 1;
@@ -169,6 +225,11 @@ async function main(argv, environment, { out = console.log, err = console.error 
     err(`Fix gold-roles.json first (no model was called):\n${problems.map(problem => `  ${problem}`).join('\n')}`);
     return 1;
   }
+  const docType = values['doc-type'] ?? gold.docType ?? null;
+  if (docType !== null && !DOC_TYPES.includes(docType)) {
+    err(`Unknown --doc-type ${docType}: use one of ${DOC_TYPES.join(', ')}.`);
+    return 1;
+  }
   const selected = selectChapters(gold, values.chapters ?? 'dev');
   if (selected.error) {
     err(selected.error);
@@ -188,9 +249,10 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const callGateway = createGatewayCall({ key, rows: rows ?? new Map(), usage, payloadOf: ({ model: id, passage }, row) => rolesPayload({ model: id, passage, row }) });
   // Answers cached by what the call sends, so an answer to another prompt is never reused.
   const work = path.join(folder, 'work');
-  const cacheFile = path.join(work, 'roles-answers.json');
+  const cacheFile = values.cache ? path.resolve(work, values.cache) : path.join(work, 'roles-answers.json');
   let cache = {};
-  try { cache = JSON.parse(await readFile(cacheFile, 'utf8')).answers ?? {}; } catch {}
+  // { answers: {...} }, or the answers alone as an earlier labelling run kept them.
+  try { const kept = JSON.parse(await readFile(cacheFile, 'utf8')); cache = kept?.answers && typeof kept.answers === 'object' ? kept.answers : kept && typeof kept === 'object' ? kept : {}; } catch {}
   let cached = 0;
   let writing = Promise.resolve();
   const callRoles = async request => {
@@ -198,7 +260,7 @@ async function main(argv, environment, { out = console.log, err = console.error 
     if (typeof cache[id] === 'string') { cached += 1; return { content: cache[id] }; }
     const answer = await callGateway(request);
     cache[id] = answer.content;
-    writing = writing.then(async () => { await mkdir(work, { recursive: true }); await writeFile(cacheFile, JSON.stringify({ answers: cache })); });
+    writing = writing.then(async () => { await mkdir(path.dirname(cacheFile), { recursive: true }); await writeFile(cacheFile, JSON.stringify({ answers: cache })); });
     await writing;
     return answer;
   };
@@ -216,38 +278,16 @@ async function main(argv, environment, { out = console.log, err = console.error 
   const seconds = (performance.now() - start) / 1000;
 
   const goldRoles = gold.gold;
+  const scope = gold.scope ? new Set(gold.scope) : undefined;
+  const structured = docType ? structureRoles(paragraphs, predicted, { docType }) : null;
   if (values.save) {
-    await writeFile(path.resolve(values.save), JSON.stringify({ model, created: new Date().toISOString(), roles: predicted, failures }));
+    await writeFile(path.resolve(values.save), JSON.stringify({ model, created: new Date().toISOString(), roles: predicted, failures, ...(structured ? { docType, structured: structured.roles } : {}) }));
   }
-  const perChapter = selected.chapters.map(chapter => ({ chapter, score: scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: [chapter] }) }));
-  const split = chapter => (gold.dev.includes(chapter.key) ? 'dev' : gold.holdout.includes(chapter.key) ? 'holdout' : '-');
-  const tableRows = perChapter.map(({ chapter, score }) => [`${chapter.key} (${split(chapter)})`, ...row('', score).slice(1)]);
-  const dev = perChapter.filter(({ chapter }) => split(chapter) === 'dev').map(({ score }) => score);
-  const holdout = perChapter.filter(({ chapter }) => split(chapter) === 'holdout').map(({ score }) => score);
-  const total = addScores(perChapter.map(({ score }) => score));
-  if (dev.length) tableRows.push(row('Dev', addScores(dev)));
-  if (holdout.length) tableRows.push(row('Holdout', addScores(holdout)));
-  tableRows.push(row('Total', total));
-
-  out(`\nModel ${model}, chapters ${values.chapters ?? 'dev'}`);
-  out(table(['Chapter', 'Scored', 'Accuracy', 'Structural', 'Struct. acc.', 'Body as structural'], tableRows));
-  out(`Empty gold paragraphs not scored: ${total.emptySkipped}.`);
-  const confusions = [...total.confusions].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  out(`Confusions (gold->predicted: count), ${confusions.reduce((sum, [, count]) => sum + count, 0)} in all:`);
-  for (const [pair, count] of confusions) out(`  ${pair}: ${count}`);
-  for (const { chapter, score } of perChapter) {
-    if (score.confusions.size) out(`  in ${chapter.key}: ${[...score.confusions].sort((a, b) => b[1] - a[1]).map(([pair, count]) => `${pair} ${count}`).join(', ')}`);
-  }
-  if (matter.length) {
-    // The front and back matter outside the chapters, apart from the chapters' scores.
-    const spans = matter.map(span => ({ span, score: scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: [span] }) }));
-    const matterTotal = addScores(spans.map(({ score }) => score));
-    out(`\nFront and back matter outside the chapters (${spans.length} ${spans.length === 1 ? 'span' : 'spans'})`);
-    out(table(['Span', 'Scored', 'Accuracy', 'Structural', 'Struct. acc.', 'Body as structural'], [...spans.map(({ span, score }) => row(span.key, score)), row('Matter', matterTotal)]));
-    const byRole = [...MATTER].map(role => [role, scoreRoles({ gold: goldRoles, predicted, paragraphs, chapters: matter, only: want => want === role })]).filter(([, score]) => score.scored > 0);
-    for (const [role, score] of byRole) out(`  ${role}: ${score.correct}/${score.scored}`);
-    const confusionsHere = [...matterTotal.confusions].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    out(`Confusions in the matter: ${confusionsHere.map(([pair, count]) => `${pair}: ${count}`).join(', ') || 'none'}.`);
+  report({ out, title: `Model ${model}, chapters ${values.chapters ?? 'dev'}${structured ? ', the model\u2019s roles' : ''}`, gold, goldRoles, predicted, paragraphs, selected, matter, scope });
+  if (structured) {
+    const changed = structured.changes.reduce((counts, change) => ({ ...counts, [`${change.from}->${change.to}`]: (counts[`${change.from}->${change.to}`] ?? 0) + 1 }), {});
+    out(`\nThe chapter-title pass (${docType}) changed ${structured.changes.length} ${structured.changes.length === 1 ? 'label' : 'labels'}${structured.changes.length ? `: ${Object.entries(changed).map(([pair, count]) => `${pair} ${count}`).join(', ')}` : ''}.`);
+    report({ out, title: `Model ${model}, chapters ${values.chapters ?? 'dev'}, after the chapter-title pass`, gold, goldRoles, predicted: structured.roles, paragraphs, selected, matter, scope });
   }
   if (failures.length) {
     const codes = failures.reduce((counts, failure) => ({ ...counts, [failure.code]: (counts[failure.code] ?? 0) + 1 }), {});

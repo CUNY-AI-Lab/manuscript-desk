@@ -5,6 +5,7 @@
 
 import { buildPassages } from '../../lib/roles/passages.js';
 import { MATTER, ROLE_IDS, STRUCTURAL, isRole } from '../../lib/roles/roles.js';
+import { structureRoles } from '../../lib/roles/structure.js';
 
 // Each role in plain words, as the review's menus show it.
 export const ROLE_LABELS = Object.freeze({
@@ -165,10 +166,18 @@ export function correctRole(labels, index, role) {
 /**
  * The labels after a labelling run. A first run sets the roles; a second try (only the paragraphs
  * left unlabelled) fills gaps and never replaces a label. The failures are those of the latest run.
- * The replies cache is no longer needed once a run has finished.
+ * The replies cache is no longer needed once a run has finished. Given the paragraphs and the
+ * document type, the chapter-title pass runs on the roles; `structured` counts the chapter titles it found.
  */
-export function afterLabelling(labels, result, { retry = false } = {}) {
-  const roles = retry ? { ...result.roles, ...(labels.roles ?? {}) } : { ...result.roles };
+export function afterLabelling(labels, result, { retry = false, paragraphs = null, docType = null } = {}) {
+  let roles = retry ? { ...result.roles, ...(labels.roles ?? {}) } : { ...result.roles };
+  // For a monograph or a dissertation, chapter titles the file's own structure shows (lib/roles/structure.js).
+  let structured = 0;
+  if (paragraphs) {
+    const pass = structureRoles(paragraphs, roles, { docType });
+    roles = pass.roles;
+    structured = pass.changes.filter(change => change.to === 'title-block').length;
+  }
   // Overlapping passages can name the same paragraph twice; each is listed once, under the first.
   const listed = new Set();
   const failures = [];
@@ -177,7 +186,9 @@ export function afterLabelling(labels, result, { retry = false } = {}) {
     for (const index of list) listed.add(index);
     if (list.length) failures.push({ code, ...(message ? { message } : {}), unlabelled: list });
   }
-  return { ...labels, roles, failures, replies: {} };
+  const kept = { ...labels };
+  delete kept.structured;
+  return { ...kept, roles, failures, replies: {}, ...(structured ? { structured } : {}) };
 }
 
 /** The paragraphs with text the model has not labelled and the scholar has not either. */

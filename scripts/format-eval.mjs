@@ -31,6 +31,7 @@ import { elements, firstWord, isWord, parseXml, wordAttribute } from '../lib/doc
 import { formatDocx } from '../lib/format/format.js';
 import { compareWords, documentWords, textOf } from '../lib/format/words.js';
 import { labelRoles } from '../lib/roles/label.js';
+import { structureRoles } from '../lib/roles/structure.js';
 import { extractRuleSheet } from '../lib/rules/extract.js';
 import { validateSheet } from '../lib/rules/schema.js';
 import { rolesPayload } from '../server/prompts.js';
@@ -365,6 +366,8 @@ async function main(argv, environment, { out = console.log, err = console.error 
   } else sheet = await readJson(path.resolve(sheetChoice));
   const checked = validateSheet(sheet);
   if (!checked.ok) { err(`The rule sheet is not valid (${checked.reason}).`); return 1; }
+  // Predicted roles go through the chapter-title pass for the sheet's document type, as on the page.
+  if (values.predicted) roles = structureRoles(read.paragraphs, roles, { docType: checked.sheet.docType }).roles;
 
   // Format, check, compare.
   const start = performance.now();
