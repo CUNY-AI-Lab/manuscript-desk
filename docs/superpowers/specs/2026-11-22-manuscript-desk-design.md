@@ -426,8 +426,11 @@ after 24 hours (my call).
 **Privacy statement on the page.** The file is opened in the browser and is
 not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to
 open-weight models under no-retention terms. Nothing is stored on the
-server. Work in progress is kept in this browser only, and cleared when the
-job is downloaded.
+server. Work in progress is kept in this browser only, and is cleared when the
+finished manuscript is downloaded, when the author chooses Start over, or
+after 24 hours. The page states only what is true at each stage: until the
+marked-up file exists, it says "cleared when you choose Start over or after 24
+hours".
 
 ## Testing and acceptance
 
