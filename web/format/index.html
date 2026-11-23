@@ -30,12 +30,19 @@
 <label class="choice"><input type="radio" name="doc-type" value="article"><span>Article</span></label>
 <label class="choice"><input type="radio" name="doc-type" value="monograph"><span>Monograph</span></label>
 <label class="choice"><input type="radio" name="doc-type" value="edited-collection"><span>Edited collection</span></label>
+<label class="choice"><input type="radio" name="doc-type" value="dissertation"><span>Dissertation or thesis</span></label>
 </fieldset>
 </section>
 
 <section class="panel" aria-labelledby="guidelines-title">
 <h2 id="guidelines-title" tabindex="-1">2. Guidelines</h2>
 <p class="section-intro">Add the guidelines for preparing a manuscript. You can add more than one, for example a press's guide and a series sheet.</p>
+<fieldset id="built-in-controls" class="choices" hidden>
+<legend>Whose requirements?</legend>
+<label class="choice"><input type="radio" name="guideline-source" value="built-in" checked><span id="built-in-name">Built-in requirements</span></label>
+<p id="built-in-about" class="help"></p>
+<label class="choice"><input type="radio" name="guideline-source" value="upload"><span>Upload another institution's requirements</span></label>
+</fieldset>
 <fieldset id="guidelines-controls" class="plain">
 <legend class="sr-only">Add guidelines</legend>
 <label for="guideline-files">Upload the guidelines (PDF or Word)</label>

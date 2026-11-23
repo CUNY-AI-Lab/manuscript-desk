@@ -120,7 +120,7 @@ test('restoring keeps the loaded mark and the failures that still fit the guidel
   const guidelines = [{ name: 'a.docx', text: TEXT }];
   const failure = { group: 'style', doc: 0, part: 0, code: 'quota_exceeded', message: 'Used up.' };
   assert.deepEqual(restoredState({ docType: 'monograph', guidelines: [], sheet, failures: [], loadedFromFile: true }),
-    { docType: 'monograph', guidelines: [], sheet, failures: [], loadedFromFile: true });
+    { docType: 'monograph', guidelines: [], sheet, failures: [], loadedFromFile: true, source: null });
   const restored = restoredState({ docType: 'monograph', guidelines, sheet, loadedFromFile: 'yes', failures: [
     failure,
     { group: 'references', doc: 0, part: 0, code: 'network_error' },
@@ -137,7 +137,7 @@ test('restoring keeps the loaded mark and the failures that still fit the guidel
     { group: 'style', doc: 0, part: 0, half: 1, code: 'model_output_limit' }]);
   assert.equal(restored.loadedFromFile, false, 'only true marks a sheet as loaded');
   assert.equal(restoredState({ docType: 'article', guidelines: [], sheet: null, loadedFromFile: true }).loadedFromFile, false, 'no sheet, no mark');
-  assert.deepEqual(restoredState(null), { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false });
+  assert.deepEqual(restoredState(null), { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, source: null });
 });
 
 test('the saved state round-trips through the store, failures included', async () => {
@@ -149,7 +149,7 @@ test('the saved state round-trips through the store, failures included', async (
   };
   await store.saveJob('format', structuredClone(savedState(state)));
   const back = restoredState(await store.loadJob('format'));
-  assert.deepEqual(back, { docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: false });
+  assert.deepEqual(back, { docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: false, source: null });
   const loaded = { ...state, ...loadedSheetState(state.sheet) };
   await store.saveJob('format', structuredClone(savedState(loaded)));
   assert.equal(restoredState(await store.loadJob('format')).loadedFromFile, true, 'the loaded mark survives a reload');
