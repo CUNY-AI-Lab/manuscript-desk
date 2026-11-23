@@ -2,7 +2,7 @@
 // rule sheet read out of them. The functions exported at the top are pure, so tests load this module
 // under Node; the page itself starts only where there is a document.
 
-import { DOC_TYPES, MAX_RULES, SHEET_VERSION, newSheet, validateRule, validateSheet } from '../../lib/rules/schema.js';
+import { DOC_TYPES, GROUPS, MAX_RULES, SHEET_VERSION, newSheet, validateRule, validateSheet } from '../../lib/rules/schema.js';
 import { extractRuleSheet } from '../../lib/rules/extract.js';
 import { splitGuidelines } from '../../lib/rules/chunk.js';
 import { normalizeForMatch } from '../../lib/rules/quote.js';
@@ -19,6 +19,9 @@ const DAMAGED = 'This rule sheet file is damaged and cannot be used.';
 const FULL = `A rule sheet can hold at most ${MAX_RULES} rules. Remove a rule before adding another.`;
 const GROUP_LABELS = { style: 'spelling, punctuation and style', references: 'citations, references and notes', structure: 'structure, layout and other requirements' };
 const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value);
+const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+export const LOADED_NOTICE = 'This rule sheet was loaded from a file. Its quotations have not been checked against any guidelines.';
+const NOT_CHANGED = 'The guidelines could not be read, so the rule sheet below was not changed.';
 
 export function sheetToFile(sheet) {
   return { name: 'rule-sheet.json', text: `${JSON.stringify(sheet, null, 2)}\n` };
@@ -104,16 +107,85 @@ export function mergeRetry(sheet, extra) {
 }
 
 // Removes a guidelines document and the rules quoted from it, and renumbers the later documents.
-export function removeGuideline(guidelines, sheet, index) {
+// A sheet loaded from a file was not read from these documents, so it is left as it is.
+export function removeGuideline(guidelines, sheet, index, { loadedFromFile = false } = {}) {
   const rest = guidelines.filter((_, i) => i !== index);
-  if (!sheet) return { guidelines: rest, sheet };
+  if (!sheet || loadedFromFile) return { guidelines: rest, sheet };
   const rules = sheet.rules
     .filter(rule => !(rule.source.kind === 'guidelines' && rule.source.doc === index))
     .map(rule => (rule.source.kind === 'guidelines' && rule.source.doc > index ? { ...rule, source: { ...rule.source, doc: rule.source.doc - 1 } } : rule));
   return { guidelines: rest, sheet: { ...sheet, rules } };
 }
 
-const rulesFromGuideline = (sheet, index) => (sheet?.rules ?? []).filter(rule => rule.source.kind === 'guidelines' && rule.source.doc === index).length;
+const rulesFromGuideline = (sheet, index, loadedFromFile) => (loadedFromFile ? 0
+  : (sheet?.rules ?? []).filter(rule => rule.source.kind === 'guidelines' && rule.source.doc === index).length);
+
+// Loading a sheet from a file: its quotations point at documents this page does not have, so the
+// guidelines on the page are cleared and the sheet is marked as loaded until the next reading.
+export function loadedSheetState(sheet) {
+  return { sheet, docType: sheet.docType, guidelines: [], failures: [], loadedFromFile: true };
+}
+
+// The question to ask before loading a sheet, or null when nothing would be lost.
+export function loadSheetQuestion({ sheet, guidelines }) {
+  const replaces = Boolean(sheet?.rules.length);
+  const clears = guidelines.length > 0;
+  if (!replaces && !clears) return null;
+  const what = [replaces && 'replaces the rule sheet below', clears && 'clears the guidelines you added, because its rules were not read from them'].filter(Boolean);
+  return `Loading a rule sheet ${what.join(' and ')}. Continue?`;
+}
+
+// What a finished reading leaves on the page. A reading that found no rules and failed somewhere
+// (allowance used up, service down, timeouts) keeps the sheet already there, edits and all; on a
+// second try its failures are those of the parts tried again. Otherwise a second try is merged into
+// the sheet, and a first reading replaces it (and with it any mark that it came from a file).
+export function afterRead(current, result, { retry = false } = {}) {
+  if (current.sheet && result.sheet.rules.length === 0 && result.failures.length > 0) {
+    return { sheet: current.sheet, failures: retry ? result.failures : current.failures, loadedFromFile: current.loadedFromFile, kept: true };
+  }
+  const sheet = retry && current.sheet ? mergeRetry(current.sheet, result.sheet) : result.sheet;
+  return { sheet, failures: result.failures, loadedFromFile: retry ? current.loadedFromFile : false, kept: false };
+}
+
+// What happened to a part that could not be read, in plain words: a sentence for each known kind
+// of failure, else the Worker's own message, else a general sentence.
+export function failureSentence({ code, message } = {}) {
+  if (code === 'model_output_limit') return 'The model ran out of room on this part. Choose another model and try again.';
+  if (typeof code === 'string' && code.includes('quota')) return 'Your model allowance is used up, so this part was not read.';
+  if (['request_timeout', 'upstream_timeout', 'network_error'].includes(code)) return 'The model service did not answer in time. Try again in a minute.';
+  if (code === 'invalid_model_response') return 'The model\'s answer could not be used. Try again, or choose another model.';
+  if (typeof message === 'string' && message.trim()) return message.trim();
+  return 'This part could not be read. Try again.';
+}
+
+const capitalise = text => text.charAt(0).toUpperCase() + text.slice(1);
+
+// One line per failed part: which rules, from which document (and part, when it has several), and why.
+export function failureLines(failures, guidelines) {
+  const parts = new Map();
+  const partCount = doc => {
+    if (!parts.has(doc)) parts.set(doc, guidelines[doc] ? splitGuidelines(guidelines[doc].text).length : 1);
+    return parts.get(doc);
+  };
+  return failures.map(failure => {
+    const name = guidelines[failure.doc]?.name ?? 'the guidelines';
+    const count = partCount(failure.doc);
+    const where = count > 1 ? `${name}, part ${failure.part + 1} of ${count}` : name;
+    return `${capitalise(GROUP_LABELS[failure.group] ?? 'some rules')} in ${where}: ${failureSentence(failure)}`;
+  });
+}
+
+export const droppedNotice = n => (n === 1
+  ? '1 rule was left out because the tool could not confirm it against the guidelines.'
+  : `${n.toLocaleString('en-US')} rules were left out because the tool could not confirm them against the guidelines.`);
+
+// The work to keep in this browser: never the files, and nothing about the page's controls.
+export const savedState = state => ({ docType: state.docType, guidelines: state.guidelines, sheet: state.sheet, failures: state.failures, loadedFromFile: state.loadedFromFile });
+
+const isFailure = (entry, guidelines) => isObject(entry) && GROUPS.includes(entry.group)
+  && Number.isInteger(entry.doc) && entry.doc >= 0 && entry.doc < guidelines.length
+  && Number.isInteger(entry.part) && entry.part >= 0
+  && typeof entry.code === 'string' && entry.code.length > 0 && entry.code.length <= 100;
 
 // The work saved in this browser, checked as untrusted: anything malformed is left out.
 export function restoredState(saved) {
@@ -123,16 +195,19 @@ export function restoredState(saved) {
       .map(entry => ({ name: entry.name, text: entry.text }))
     : [];
   const docType = sheet.ok ? sheet.sheet.docType : DOC_TYPES.includes(saved?.docType) ? saved.docType : null;
-  return { docType, guidelines, sheet: sheet.ok ? sheet.sheet : null };
+  const failures = isObject(saved) && Array.isArray(saved.failures)
+    ? saved.failures.filter(entry => isFailure(entry, guidelines)).map(({ group, doc, part, code, message }) => ({
+      group, doc, part, code, ...(typeof message === 'string' && message ? { message: message.slice(0, 300) } : {}),
+    }))
+    : [];
+  return { docType, guidelines, sheet: sheet.ok ? sheet.sheet : null, failures, loadedFromFile: sheet.ok && saved.loadedFromFile === true };
 }
-
-const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 if (typeof document !== 'undefined') start();
 
 function start() {
   const $ = id => document.getElementById(id);
-  const state = { docType: null, guidelines: [], sheet: null, failures: [], editingId: null, adding: false, running: null };
+  const state = { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false, running: null };
   let store = null;
   try {
     if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB });
@@ -145,7 +220,7 @@ function start() {
   };
   // Saves the work so far (never the files themselves); before the saved copy is read back, nothing
   // is written, so an early save cannot overwrite it.
-  const save = () => (store && restored ? queue(() => store.saveJob('format', structuredClone({ docType: state.docType, guidelines: state.guidelines, sheet: state.sheet }))) : saving);
+  const save = () => (store && restored ? queue(() => store.saveJob('format', structuredClone(savedState(state)))) : saving);
   const api = createApi({ onLostSession: save });
   let extractors = null;
   // The PDF and Word readers (mammoth is large) load only when the first file is added.
@@ -188,16 +263,14 @@ function start() {
     $('sheet-work').inert = state.running !== null;
     $('sheet-empty').hidden = Boolean(sheet?.rules.length);
     const notices = [];
+    if (sheet && state.loadedFromFile) notices.push(el('p', { className: 'notice', id: 'loaded-notice', text: LOADED_NOTICE }));
     if (sheet?.manual.named) notices.push(el('p', { className: 'notice info', text: `Style manual named in the guidelines: ${sheet.manual.named}` }));
-    if (sheet?.dropped > 0) {
-      notices.push(el('p', { className: 'notice', text: sheet.dropped === 1
-        ? '1 rule was left out because the tool could not find its wording in the guidelines.'
-        : `${sheet.dropped.toLocaleString('en-US')} rules were left out because the tool could not find their wording in the guidelines.` }));
-    }
+    if (sheet?.dropped > 0) notices.push(el('p', { className: 'notice', id: 'dropped-notice', text: droppedNotice(sheet.dropped) }));
     if (state.failures.length) {
       const groups = [...new Set(state.failures.map(failure => failure.group))].map(group => GROUP_LABELS[group] ?? group);
-      notices.push(el('div', { className: 'notice' },
+      notices.push(el('div', { className: 'notice', id: 'failure-notice' },
         el('p', { text: `Some parts of the guidelines could not be read, so rules may be missing about ${groups.join('; ')}. Try again, or add the missing rules yourself.` }),
+        el('ul', { className: 'failure-list' }, ...failureLines(state.failures, state.guidelines).map(line => el('li', { text: line }))),
         el('button', { type: 'button', className: 'button secondary', id: 'retry-button', text: 'Try again', onclick: () => void read({ retry: true }) })));
     }
     $('sheet-notices').replaceChildren(...notices);
@@ -256,7 +329,7 @@ function start() {
     if (state.sheet?.rules.length && state.sheet.docType !== value
       && !confirm('Changing what you are submitting clears the rule sheet below. Continue?')) { render(); return; }
     state.docType = value;
-    if (state.sheet && state.sheet.docType !== value) Object.assign(state, { sheet: null, failures: [], editingId: null });
+    if (state.sheet && state.sheet.docType !== value) Object.assign(state, { sheet: null, failures: [], loadedFromFile: false, editingId: null });
     changed();
   }
 
@@ -305,16 +378,16 @@ function start() {
 
   function removeSource(index) {
     const { name } = state.guidelines[index];
-    const count = rulesFromGuideline(state.sheet, index);
+    const count = rulesFromGuideline(state.sheet, index, state.loadedFromFile);
     if (count && !confirm(`Remove ${name}? The ${plural(count, 'rule', 'rules')} read from it will be removed from the rule sheet too.`)) return;
-    ({ guidelines: state.guidelines, sheet: state.sheet } = removeGuideline(state.guidelines, state.sheet, index));
+    ({ guidelines: state.guidelines, sheet: state.sheet } = removeGuideline(state.guidelines, state.sheet, index, { loadedFromFile: state.loadedFromFile }));
     state.failures = [];
     changed({ focusId: 'guidelines-title' });
     announce(`${name} removed.`);
   }
 
   const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal })
-    .catch(error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry } : error; });
+    .catch(error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, message: error.message } : error; });
   const partKey = (group, text) => `${group}\u0000${text}`;
 
   async function read({ retry = false } = {}) {
@@ -338,7 +411,7 @@ function start() {
     $('progress-text').textContent = 'Reading the guidelines…';
     render();
     try {
-      const { sheet, failures } = await extractRuleSheet({
+      const result = await extractRuleSheet({
         docType: state.docType, model, guidelines: texts, callRules: calls, signal: controller.signal,
         onProgress: ({ done, total }) => {
           $('progress').max = total;
@@ -346,9 +419,15 @@ function start() {
           $('progress-text').textContent = `Reading the guidelines: ${done} of ${plural(total, 'part', 'parts')} done.`;
         },
       });
-      state.sheet = retry && state.sheet ? mergeRetry(state.sheet, sheet) : sheet;
-      state.failures = failures;
-      announce(`Finished reading the guidelines. The rule sheet has ${plural(state.sheet.rules.length, 'rule', 'rules')}.`);
+      const next = afterRead(state, result, { retry });
+      Object.assign(state, { sheet: next.sheet, failures: next.failures, loadedFromFile: next.loadedFromFile });
+      if (next.kept) {
+        // The sheet on the page is left as it was, so the copy kept in this browser stays the same.
+        // The error banner is an alert, so it is announced.
+        showErrors([NOT_CHANGED, ...new Set(result.failures.map(failureSentence))]);
+      } else {
+        announce(`Finished reading the guidelines. The rule sheet has ${plural(state.sheet.rules.length, 'rule', 'rules')}.`);
+      }
     } catch {
       if (controller.signal.aborted) announce('Stopped. The rule sheet was not changed.');
       else showErrors(['The guidelines could not be read. Try again.']);
@@ -376,17 +455,18 @@ function start() {
     const text = file.size > MAX_SHEET_FILE_CHARS * 4 ? null : await file.text().catch(() => null);
     const result = text === null ? { ok: false, message: NOT_A_SHEET } : sheetFromFile(text);
     if (!result.ok) { showErrors([result.message]); return; }
-    if (state.sheet?.rules.length && !confirm('Loading a rule sheet replaces the rule sheet below. Continue?')) return;
+    const question = loadSheetQuestion(state);
+    if (question && !confirm(question)) return;
     showErrors([]);
-    Object.assign(state, { sheet: result.sheet, docType: result.sheet.docType, failures: [], editingId: null, adding: false });
+    Object.assign(state, loadedSheetState(result.sheet), { editingId: null, adding: false });
     changed({ focusId: 'sheet-title' });
-    announce(`Rule sheet loaded, with ${plural(result.sheet.rules.length, 'rule', 'rules')}.`);
+    announce(`Rule sheet loaded, with ${plural(result.sheet.rules.length, 'rule', 'rules')}. ${LOADED_NOTICE}`);
   }
 
   function startOver() {
     if ((state.guidelines.length || state.sheet) && !confirm('Start over? This clears the guidelines and the rule sheet from this browser.')) return;
     state.running?.abort();
-    Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], editingId: null, adding: false });
+    Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false });
     $('paste-box').value = '';
     showErrors([]);
     render();

@@ -99,9 +99,9 @@ test('saved work is restored only where it is well formed', () => {
   const text = 'Use double quotation marks throughout the manuscript. '.repeat(5);
   const sheet = sheetWith([quoted('quotations-1')]);
   assert.deepEqual(restoredState({ docType: 'article', guidelines: [{ name: 'a.docx', text }, { name: 'short', text: 'x' }, 'junk'], sheet }),
-    { docType: 'monograph', guidelines: [{ name: 'a.docx', text }], sheet });
-  assert.deepEqual(restoredState({ docType: 'article', guidelines: 'no', sheet: { version: 1 } }), { docType: 'article', guidelines: [], sheet: null });
-  assert.deepEqual(restoredState(null), { docType: null, guidelines: [], sheet: null });
+    { docType: 'monograph', guidelines: [{ name: 'a.docx', text }], sheet, failures: [], loadedFromFile: false });
+  assert.deepEqual(restoredState({ docType: 'article', guidelines: 'no', sheet: { version: 1 } }), { docType: 'article', guidelines: [], sheet: null, failures: [], loadedFromFile: false });
+  assert.deepEqual(restoredState(null), { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false });
 });
 
 test('every setting of every rule has a control and plain words', () => {

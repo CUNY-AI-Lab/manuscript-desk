@@ -94,7 +94,11 @@ progress::-moz-progress-bar { background: var(--primary-blue); }
 .rule { border-top: 1px solid #e8eaef; padding: 14px 0; }
 .rule-statement { margin: 0 0 6px; font-weight: 500; overflow-wrap: anywhere; }
 .rule-source { margin: 0 0 10px; font: italic .9rem/1.6 var(--serif); color: var(--text-muted); overflow-wrap: anywhere; }
-.rule.off .rule-statement, .rule.off .rule-source { color: #8a91a1; }
+.rule-settings { list-style: none; padding: 0; margin: -4px 0 10px; font-size: .85rem; color: var(--text-muted); }
+.rule-settings li { margin: 0 0 2px; }
+.failure-list { margin: 0 0 12px; padding-left: 20px; }
+.failure-list li { margin: 0 0 4px; }
+.rule.off .rule-statement, .rule.off .rule-source, .rule.off .rule-settings { color: #8a91a1; }
 .rule.off .rule-statement { text-decoration: line-through; }
 .rule-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
 .rule-controls .row-actions { margin: 0; gap: 18px; }
