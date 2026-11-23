@@ -52,6 +52,8 @@ test('the paper, the margins and the line spacing the sheet sets are applied, by
   const body = look.paragraphs.filter(entry => entry.styleName === 'Body Text' || entry.styleName === 'Body Text First');
   assert.ok(body.length > 3 && body.every(entry => entry.line === 480), 'the body is double-spaced');
   assert.ok(look.notes.filter(entry => !entry.separator).every(entry => entry.line === 240), 'notes are single-spaced');
+  const front = look.paragraphs.filter(entry => ['Abstract', 'Dedication', 'Contents Entry'].includes(entry.styleName));
+  assert.ok(front.length === 5 && front.every(entry => entry.line === 480), 'the front matter\'s text takes the line spacing of the text');
   assert.ok(declared(result, DECLARED.paper) > 0 && declared(result, DECLARED.margins) > 0 && declared(result, DECLARED.elementSpacing) === 1);
 });
 
