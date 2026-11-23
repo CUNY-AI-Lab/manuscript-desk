@@ -25,6 +25,8 @@ The page's decisions are pure functions that load under Node (`web/format/app.js
 
 It is a Cloudflare Worker (`server/worker.js`) with static assets built into `dist/`. The Worker has no public address of its own: the portal (CAIL Doorway) handles sign-in and access, then forwards two signed identity assertions over a service binding. The Worker verifies both and calls models through the CAIL Gateway, which it reaches only through its `GATEWAY` service binding.
 
+When the Worker answers that the session is missing or has ended (`authentication_required`, `session_invalid`), the page saves its work and goes to the launch path `/launch/manuscript` so sign-in restarts. It does that at most once per page, and only when `sessionStorage` can record it, so at most once a minute across reloads; otherwise it stays where it is and offers a "Sign in with CUNY" link (`web/shared/api.js`, as in the Bibliography Converter). An identity assertion that fails verification (`invalid_credential`) only shows the Worker's message: signing in again would not cure it. A session that stays invalid therefore cannot bounce the page between the tool and the launch path.
+
 ## Develop
 
 Requires Node.js 22.

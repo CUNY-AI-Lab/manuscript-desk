@@ -126,8 +126,11 @@ try {
   assert.equal(await page.locator('#category-quotations').textContent(), 'Quotations');
   assert.equal(await rule.getByLabel('What to do').inputValue(), 'fix');
   assert.equal(calls.length, 3, 'one reading per group of a monograph');
-  assert.equal(calls.settings.length, 1, 'then one question about the settings no reading filled');
-  assert.ok(!calls.settings[0].slots.includes('quotes.primary') && calls.settings[0].slots.includes('notes.kind'));
+  // The settings question; any other call to /api/settings is the question about left-out sentences (no slots).
+  const settingsQuestions = calls.settings.filter(body => body.slots.length > 0);
+  assert.equal(settingsQuestions.length, 1, 'then one question about the settings no reading filled');
+  assert.ok(calls.settings.every(body => body.slots.length > 0 || Array.isArray(body.unreported)));
+  assert.ok(!settingsQuestions[0].slots.includes('quotes.primary') && settingsQuestions[0].slots.includes('notes.kind'));
   for (const { body, headers } of calls) {
     assert.equal(body.model, DEFAULT_MODEL);
     assert.equal(body.docType, 'monograph');
@@ -280,6 +283,11 @@ try {
   await mock(context3, (route, body) => (lost
     ? json(route, { error: { code: 'authentication_required', message: 'Sign in with CUNY to continue.', request_id: 'r', launch: '/launch/manuscript' } }, 401)
     : json(route, { request_id: 'r', content: '{"rules":[]}' })));
+  // The session check answers as signed in until the page has been sent to sign-in once.
+  let sessionLost = false;
+  await context3.route('**/manuscript/api/session', route => (sessionLost
+    ? json(route, { error: { code: 'session_invalid', message: 'Sign in with CUNY to continue.', request_id: 'r', launch: '/launch/manuscript' } }, 401)
+    : json(route, { authenticated: true })));
   const page3 = await context3.newPage();
   watch(page3);
   await page3.goto(pageUrl);
@@ -289,11 +297,26 @@ try {
   await page3.getByRole('button', { name: 'Add pasted text' }).click();
   await Promise.all([page3.waitForURL(`${origin}/launch/manuscript`), page3.getByRole('button', { name: 'Read the guidelines' }).click()]);
   log('a mocked 401 navigated the page to /launch/manuscript');
-  lost = false;
+  // Sign-in did not cure the session: the page's own session check is refused too. Within a minute
+  // the page does not go to sign-in again, on opening or on a call; it offers the link instead.
+  sessionLost = true;
   await page3.goto(pageUrl);
   await page3.locator('#sources li', { hasText: 'Pasted text 1' }).waitFor();
   assert.equal(await page3.getByLabel('Edited collection').isChecked(), true);
   log('back on the page after the 401, the pasted guidelines and the choice were restored');
+  const signIn = page3.locator('#signin-notice a', { hasText: 'Sign in with CUNY' });
+  await signIn.waitFor();
+  assert.equal(page3.url(), pageUrl, 'opening the page with the session still lost does not navigate');
+  await page3.getByRole('button', { name: 'Read the guidelines' }).click();
+  await page3.locator('#failure-notice').waitFor();
+  assert.equal(page3.url(), pageUrl, 'a second lost session within a minute does not navigate');
+  assert.equal(await signIn.isVisible(), true);
+  assert.equal(await signIn.getAttribute('href'), `${origin}/launch/manuscript`);
+  assert.equal(await page3.locator('#session-status a').getAttribute('href'), `${origin}/launch/manuscript`);
+  log('with the session still lost, opening the page and reading again left it where it was and offered "Sign in with CUNY" instead');
+  lost = false;
+  await Promise.all([page3.waitForURL(`${origin}/launch/manuscript`), signIn.click()]);
+  log('the offered link goes to /launch/manuscript');
   await context3.close();
 
   // ---- A failed group, "Try again", and two rules that disagree ----

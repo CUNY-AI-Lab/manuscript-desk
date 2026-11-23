@@ -1,31 +1,54 @@
 // Same-origin client for the Worker's /manuscript/api routes. No DOM access, so it loads under Node.
 // It never retries: a caller may retry once when an ApiError says `retry` (the Worker's
-// x-should-retry header). A lost session (401) runs onLostSession, then navigates the page to the
-// launch path so sign-in restarts, and the call never settles.
+// x-should-retry header). A lost CAIL session (401) restarts sign-in at the launch path at most once
+// per page and once a minute (see restartSignIn); otherwise it rejects with an ApiError carrying
+// signInUrl, so the page can offer a "Sign in with CUNY" link instead.
 import { retryAfterOf } from '../../lib/calls/backoff.js';
 
-const LOST_SESSION = new Set(['authentication_required', 'invalid_credential', 'session_invalid']);
-const LAUNCH_PATH = '/launch/manuscript';
+// Only a missing or ended session is cured by signing in again. invalid_credential (an assertion
+// that fails verification) is not: sending the page through sign-in again would loop.
+const LOST_SESSION = new Set(['authentication_required', 'session_invalid']);
+const RESTART_KEY = 'manuscript-signin-restart';
+const RESTART_WINDOW_MS = 60000;
+export const LAUNCH_PATH = '/launch/manuscript';
 const LAUNCH = /^\/launch\/[a-z0-9-]+$/;
 // A little longer than the Worker's own three-minute deadline, so its answer arrives first.
 const BROWSER_TIMEOUT_MS = 185000;
 
 export class ApiError extends Error {
-  constructor({ code, message, status = 0, retry = false, requestId = null, retryAfter }) {
+  constructor({ code, message, status = 0, retry = false, requestId = null, retryAfter, signInUrl }) {
     super(message);
     this.name = 'ApiError';
-    Object.assign(this, { code, status, retry, requestId, ...(retryAfter ? { retryAfter } : {}) });
+    Object.assign(this, { code, status, retry, requestId, ...(retryAfter ? { retryAfter } : {}), ...(signInUrl ? { signInUrl } : {}) });
   }
 }
 
 export function createApi({
   fetchImpl = (...args) => fetch(...args),
-  navigate = url => location.assign(url),
+  location = globalThis.location,
   base = '/manuscript',
+  storage,
+  now = Date.now,
   onLostSession,
   randomUUID = () => crypto.randomUUID(),
 } = {}) {
-  let leaving = false;
+  let restarted = false;
+  // A lost CAIL session needs a full-page navigation to the launch path so sign-in restarts. It happens
+  // at most once per page, and only when sessionStorage can record it, so that no more than one
+  // automatic restart happens per minute across reloads. Otherwise (storage unavailable, or a restart
+  // in the last minute) the error carries signInUrl and the page shows a "Sign in with CUNY" link.
+  function restartSignIn() {
+    if (restarted) return false;
+    try {
+      const last = Number(storage.getItem(RESTART_KEY));
+      if (last && now() - last < RESTART_WINDOW_MS) return false;
+      const stamp = String(now());
+      storage.setItem(RESTART_KEY, stamp);
+      if (storage.getItem(RESTART_KEY) !== stamp) return false;
+    } catch { return false; }
+    restarted = true;
+    return true;
+  }
   async function call(method, path, body, signal) {
     const init = {
       method,
@@ -52,25 +75,29 @@ export function createApi({
     if (response.ok) return data;
     const envelope = data?.error;
     const code = typeof envelope?.code === 'string' ? envelope.code : 'service_unavailable';
+    const message = typeof envelope?.message === 'string' && envelope.message ? envelope.message : 'The CUNY AI Lab service is unavailable. Try again later.';
+    const requestId = typeof envelope?.request_id === 'string' ? envelope.request_id : null;
     if (response.status === 401 && LOST_SESSION.has(code)) {
-      // Calls in flight together may all find the session lost; the page navigates once, since a
-      // second navigation would cancel the first.
-      if (!leaving) {
-        leaving = true;
+      const signInUrl = new URL(typeof envelope?.launch === 'string' && LAUNCH.test(envelope.launch) ? envelope.launch : LAUNCH_PATH, location.href).href;
+      // The page is leaving: this call and any other that finds the session lost meanwhile never
+      // settle, so nothing reports a failure on the way out. The work is saved first.
+      if (restarted) return new Promise(() => {});
+      if (restartSignIn()) {
         try {
           await onLostSession?.();
         } catch {}
-        navigate(typeof envelope?.launch === 'string' && LAUNCH.test(envelope.launch) ? envelope.launch : LAUNCH_PATH);
+        location.assign(signInUrl);
+        return new Promise(() => {});
       }
-      return new Promise(() => {});
+      throw new ApiError({ code, status: 401, message, requestId, signInUrl });
     }
     throw new ApiError({
       code,
       status: response.status,
-      message: typeof envelope?.message === 'string' && envelope.message ? envelope.message : 'The CUNY AI Lab service is unavailable. Try again later.',
+      message,
       retry: response.headers.get('x-should-retry') === 'true',
       retryAfter: retryAfterOf(response.headers.get('retry-after')),
-      requestId: typeof envelope?.request_id === 'string' ? envelope.request_id : null,
+      requestId,
     });
   }
   return {

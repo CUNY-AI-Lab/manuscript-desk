@@ -234,8 +234,29 @@ function start() {
   // Saves the work so far (never the files themselves); before the saved copy is read back, nothing
   // is written, so an early save cannot overwrite it.
   const save = () => (store && restored ? queue(() => store.saveJob('format', structuredClone(savedState(state)))) : saving);
+  // sessionStorage records an automatic sign-in restart, so it happens at most once a minute; where
+  // it cannot be read, the page never restarts sign-in on its own and offers the link instead.
+  let sessionStore = null;
+  try { sessionStore = globalThis.sessionStorage; } catch {}
   // A lost sign-in saves everything first: the rule sheet and the paragraph labels done so far.
-  const api = createApi({ onLostSession: () => Promise.all([save(), manuscript.save()]) });
+  const client = createApi({ storage: sessionStore, onLostSession: () => Promise.all([save(), manuscript.save()]) });
+  // Shown with every lost-session error the page did not answer by restarting sign-in itself (it did
+  // so in the last minute, or sessionStorage is unavailable), so a person can always sign in again.
+  // Same-origin only: the client resolves signInUrl to a /launch/ path on this site.
+  const signInLink = url => el('a', { className: 'button secondary', href: url, text: 'Sign in with CUNY' });
+  const offerSignIn = url => {
+    $('signin-notice').replaceChildren(el('p', { text: 'Your CUNY session has ended, so nothing more can be sent to the models. Sign in again to go on.' }), el('p', {}, signInLink(url)));
+    $('signin-notice').hidden = false;
+    $('session-status').replaceChildren(signInLink(url));
+  };
+  const offered = error => {
+    if (error instanceof ApiError && error.signInUrl) offerSignIn(error.signInUrl);
+    throw error;
+  };
+  const api = {
+    get: (path, options) => client.get(path, options).catch(offered),
+    post: (path, body, options) => client.post(path, body, options).catch(offered),
+  };
   // Steps 4 to 6 share the manuscript, held in memory only, and its labels.
   const job = { file: null, labels: null, labelling: null, formatting: false, output: null };
   let extractors = null;
@@ -504,6 +525,7 @@ function start() {
     try {
       await api.get('/api/session');
       $('session-status').textContent = 'Signed in with CUNY';
+      $('signin-notice').hidden = true;
       try {
         const quota = await api.get('/api/quota');
         if (![quota.estimated_remaining, quota.estimated_used, quota.limit, quota.used_percent].every(Number.isFinite)) throw new Error('quota');
@@ -519,8 +541,9 @@ function start() {
         $('quota-content').replaceChildren(el('p', { className: 'help', text: 'Your usage estimate is unavailable right now. You can still read the guidelines.' }),
           ...(error instanceof ApiError && error.requestId ? [el('p', { className: 'help', text: `Support reference: ${error.requestId}` })] : []));
       }
-    } catch {
-      $('session-status').textContent = 'The CUNY AI Lab service cannot be reached right now.';
+    } catch (error) {
+      if (error instanceof ApiError && error.signInUrl) $('session-status').replaceChildren(signInLink(error.signInUrl));
+      else $('session-status').textContent = 'The CUNY AI Lab service cannot be reached right now.';
       $('quota-content').replaceChildren();
     } finally {
       $('refresh-quota').disabled = false;

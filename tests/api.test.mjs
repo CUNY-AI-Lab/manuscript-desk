@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiError, createApi } from '../web/shared/api.js';
+import { ApiError, LAUNCH_PATH, createApi } from '../web/shared/api.js';
 
 const reply = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 const lostSession = (code, headers = {}) => reply(401, { error: { code, message: 'Sign in with CUNY to continue.', request_id: '00000000-0000-4000-8000-000000000000', launch: '/launch/manuscript' } }, { 'x-should-retry': 'false', ...headers });
@@ -18,62 +18,116 @@ const settledWithin = (promise, ms = 50) => Promise.race([
   new Promise(resolve => setTimeout(() => resolve('pending'), ms)),
 ]);
 
+// What the page passes in: a location that records navigations, and sessionStorage.
+const memoryStorage = () => { const values = new Map(); return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)) }; };
+const PAGE = 'https://tools.ailab.gc.cuny.edu/manuscript/format/';
+const launchURL = 'https://tools.ailab.gc.cuny.edu/launch/manuscript';
+function setup(answer, extra = {}) {
+  const assigned = [];
+  const location = { href: PAGE, assign: url => assigned.push(String(url)) };
+  const { calls, fetchImpl } = recorder(answer);
+  const api = createApi({ fetchImpl, location, storage: memoryStorage(), ...extra });
+  return { api, calls, assigned };
+}
+
 test('get resolves parsed JSON', async () => {
-  const { calls, fetchImpl } = recorder(() => reply(200, { authenticated: true }));
-  const api = createApi({ fetchImpl, navigate: () => assert.fail('must not navigate') });
+  const { api, calls, assigned } = setup(() => reply(200, { authenticated: true }));
   assert.deepEqual(await api.get('/api/session'), { authenticated: true });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/manuscript/api/session');
   assert.equal(calls[0].init.method, 'GET');
   assert.equal(calls[0].init.body, undefined);
+  assert.deepEqual(assigned, []);
 });
 
-test('a 401 authentication_required runs onLostSession then navigates to the launch path and does not settle', async () => {
+test('a lost CAIL session restarts sign-in once at the launch path, with no retry of the request', async () => {
+  assert.equal(LAUNCH_PATH, '/launch/manuscript');
+  for (const code of ['authentication_required', 'session_invalid']) {
+    // Even a 401 marked retryable is not retried.
+    const { api, calls, assigned } = setup(() => lostSession(code, { 'x-should-retry': 'true' }));
+    assert.equal(await settledWithin(api.post('/api/rules', { text: 'x' })), 'pending', code);
+    assert.deepEqual(assigned, [launchURL], code);
+    assert.equal(calls.length, 1, 'each call fetches once; nothing is re-issued');
+    assert.ok(calls.every(call => !call.url.includes('/launch/')), 'the launch path is not fetched from script');
+  }
+});
+
+test('a restart runs onLostSession first, then navigates, and the call does not settle', async () => {
   const order = [];
-  const { fetchImpl } = recorder(() => lostSession('authentication_required'));
-  const api = createApi({
-    fetchImpl,
-    navigate: url => order.push(`navigate ${url}`),
+  const { api } = setup(() => lostSession('authentication_required'), {
+    location: { href: PAGE, assign: url => order.push(`navigate ${url}`) },
     onLostSession: async () => { await new Promise(resolve => setTimeout(resolve, 5)); order.push('saved'); },
   });
   assert.equal(await settledWithin(api.get('/api/quota')), 'pending');
-  assert.deepEqual(order, ['saved', 'navigate /launch/manuscript']);
-});
-
-test('a 401 does not retry and does not fetch the launch path from script', async () => {
-  for (const code of ['authentication_required', 'invalid_credential', 'session_invalid']) {
-    const navigated = [];
-    // Even a 401 marked retryable is not retried.
-    const { calls, fetchImpl } = recorder(() => lostSession(code, { 'x-should-retry': 'true' }));
-    const api = createApi({ fetchImpl, navigate: url => navigated.push(url) });
-    assert.equal(await settledWithin(api.post('/api/rules', { text: 'x' })), 'pending', code);
-    assert.equal(calls.length, 1, code);
-    assert.ok(calls.every(call => !call.url.includes('/launch/')), code);
-    assert.deepEqual(navigated, ['/launch/manuscript'], code);
-  }
+  assert.deepEqual(order, ['saved', `navigate ${launchURL}`]);
 });
 
 test('calls that find the session lost together navigate once', async () => {
   const order = [];
-  const { calls, fetchImpl } = recorder(() => lostSession('authentication_required'));
-  const api = createApi({ fetchImpl, navigate: url => order.push(`navigate ${url}`), onLostSession: () => { order.push('saved'); } });
+  const { api, calls } = setup(() => lostSession('authentication_required'), {
+    location: { href: PAGE, assign: url => order.push(`navigate ${url}`) },
+    onLostSession: () => { order.push('saved'); },
+  });
   const results = await Promise.all([1, 2, 3].map(() => settledWithin(api.post('/api/rules', {}))));
   assert.deepEqual(results, ['pending', 'pending', 'pending']);
   assert.equal(calls.length, 3);
-  assert.deepEqual(order, ['saved', 'navigate /launch/manuscript']);
+  assert.deepEqual(order, ['saved', `navigate ${launchURL}`]);
 });
 
-test('a 401 with an unexpected launch value navigates to the tool launch path', async () => {
-  const navigated = [];
-  const { fetchImpl } = recorder(() => reply(401, { error: { code: 'authentication_required', message: 'x', launch: 'https://elsewhere.example/' } }));
-  const api = createApi({ fetchImpl, navigate: url => navigated.push(url) });
-  assert.equal(await settledWithin(api.get('/api/session')), 'pending');
-  assert.deepEqual(navigated, ['/launch/manuscript']);
+test('sign-in restart is not repeated across a reload within a minute, but the link is still offered', async () => {
+  const storage = memoryStorage();
+  let clock = 1_000_000;
+  const first = setup(() => lostSession('session_invalid'), { storage, now: () => clock });
+  assert.equal(await settledWithin(first.api.get('/api/quota')), 'pending');
+  clock += 59_000;
+  const second = setup(() => lostSession('session_invalid'), { storage, now: () => clock, onLostSession: () => assert.fail('nothing is saved for a navigation that does not happen') });
+  await assert.rejects(second.api.get('/api/quota'), error => error instanceof ApiError && error.status === 401 && error.code === 'session_invalid' && error.signInUrl === launchURL);
+  clock += 2_000;
+  const third = setup(() => lostSession('session_invalid'), { storage, now: () => clock });
+  assert.equal(await settledWithin(third.api.get('/api/quota')), 'pending');
+  assert.deepEqual([first.assigned.length, second.assigned.length, third.assigned.length], [1, 0, 1]);
+});
+
+test('without usable sessionStorage the page never navigates on its own and offers the link instead', async () => {
+  const broken = [
+    undefined,
+    null,
+    { getItem() { throw new Error('SecurityError'); }, setItem() {} },
+    { getItem: () => null, setItem() { throw new Error('QuotaExceededError'); } },
+    { getItem: () => null, setItem() {} },
+  ];
+  for (const storage of broken) {
+    const { api, assigned } = setup(() => lostSession('authentication_required'), { storage });
+    for (let i = 0; i < 3; i++) await assert.rejects(api.get('/api/quota'), error => error.code === 'authentication_required' && error.signInUrl === launchURL);
+    assert.deepEqual(assigned, []);
+  }
+});
+
+test('the Worker invalid_credential code and other errors only show an error', async () => {
+  for (const [status, code] of [[401, 'invalid_credential'], [403, 'authentication_required'], [429, 'quota_exceeded']]) {
+    const { api, assigned } = setup(() => reply(status, { error: { code, message: 'No.', request_id: 'r', launch: '/launch/manuscript' } }));
+    await assert.rejects(api.post('/api/rules', {}), error => error instanceof ApiError && error.code === code && error.signInUrl === undefined);
+    assert.deepEqual(assigned, []);
+  }
+});
+
+test('a 401 launch value is used only when it is a same-origin /launch/ path', async () => {
+  const withLaunch = launch => () => reply(401, { error: { code: 'authentication_required', message: 'x', launch } });
+  const good = setup(withLaunch('/launch/manuscript'));
+  assert.equal(await settledWithin(good.api.get('/api/session')), 'pending');
+  assert.deepEqual(good.assigned, [launchURL]);
+  for (const launch of ['//evil.example/launch/x', 'https://evil.example/launch/x', '/launch/../welcome', 'javascript:alert(1)', 42]) {
+    const bad = setup(withLaunch(launch));
+    assert.equal(await settledWithin(bad.api.get('/api/session')), 'pending');
+    assert.deepEqual(bad.assigned, [launchURL]);
+    const linked = setup(withLaunch(launch), { storage: null });
+    await assert.rejects(linked.api.get('/api/session'), error => error.signInUrl === launchURL);
+  }
 });
 
 test('a 429 rejects with retry true from x-should-retry', async () => {
   const { calls, fetchImpl } = recorder(() => reply(429, { error: { code: 'rate_limited', message: 'Too many requests. Try again shortly.', request_id: 'abc' } }, { 'x-should-retry': 'true' }));
-  const api = createApi({ fetchImpl, navigate: () => assert.fail('must not navigate') });
+  const api = createApi({ fetchImpl, location: { href: PAGE, assign: () => assert.fail('must not navigate') } });
   const error = await api.post('/api/rules', {}).then(() => assert.fail('must reject'), error => error);
   assert.ok(error instanceof ApiError);
   assert.equal(error.status, 429);
