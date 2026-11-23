@@ -177,15 +177,17 @@ const coded = (code, retry) => Object.assign(new Error(`The model call failed: $
 const countOf = value => (Number.isInteger(value) && value >= 0 ? value : null);
 
 /**
- * A callRules for extractRuleSheet that calls the Gateway directly with a CAIL API key, adding the
- * tokens of every reply to `usage` ({ prompt, completion, calls, unmetered }).
- * Resolves { content } or rejects with an Error carrying { code, retry }.
- * @param {{ key: string, rows: Map<string, object>, usage: object, fetchImpl?: typeof fetch }} options
+ * A model call that goes to the Gateway directly with a CAIL API key, sending the payload
+ * `payloadOf(request, row)` builds and adding the tokens of every reply to `usage`
+ * ({ prompt, completion, calls, unmetered }). Resolves { content } or rejects with an Error
+ * carrying { code, retry }. Shared with scripts/roles-eval.mjs.
+ * @param {{ key: string, rows: Map<string, object>, usage: object, payloadOf: (request: object, row?: object) => object, fetchImpl?: typeof fetch }} options
  */
-export function createCallRules({ key, rows, usage, fetchImpl = globalThis.fetch }) {
-  return async function callRules({ model, docType, group, text, signal }) {
+export function createGatewayCall({ key, rows, usage, payloadOf, fetchImpl = globalThis.fetch }) {
+  return async function call(request) {
+    const { signal } = request;
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const body = JSON.stringify(rulesPayload({ model, docType, group, text, row: rows.get(model) }));
+    const body = JSON.stringify(payloadOf(request, rows.get(request.model)));
     usage.calls += 1;
     let response, data;
     try {
@@ -223,8 +225,16 @@ export function createCallRules({ key, rows, usage, fetchImpl = globalThis.fetch
   };
 }
 
+/**
+ * A callRules for extractRuleSheet that calls the Gateway directly with a CAIL API key.
+ * @param {{ key: string, rows: Map<string, object>, usage: object, fetchImpl?: typeof fetch }} options
+ */
+export function createCallRules({ key, rows, usage, fetchImpl }) {
+  return createGatewayCall({ key, rows, usage, fetchImpl, payloadOf: ({ model, docType, group, text }, row) => rulesPayload({ model, docType, group, text, row }) });
+}
+
 // The public catalog's rows by model id, or null when it cannot be read.
-async function readCatalog(fetchImpl = globalThis.fetch) {
+export async function readCatalog(fetchImpl = globalThis.fetch) {
   try {
     const response = await fetchImpl(`${GATEWAY}/v1/models`, { signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS) });
     if (!response.ok) return null;
@@ -239,7 +249,7 @@ async function readCatalog(fetchImpl = globalThis.fetch) {
 const price = value => ((typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) && Number.isFinite(Number(value)) ? Number(value) : null);
 
 // US dollars for the tokens used, or null when the row has no prices.
-function costOf(usage, row) {
+export function costOf(usage, row) {
   const input = price(row?.pricing?.input);
   const output = price(row?.pricing?.output);
   if (input === null || output === null) return null;
@@ -366,7 +376,7 @@ export async function readCaseFile(file) {
 // ---------------------------------------------------------------------------------------------
 // Report
 
-function table(header, rows) {
+export function table(header, rows) {
   const widths = header.map((title, column) => Math.max(title.length, ...rows.map(row => String(row[column]).length)));
   const line = row => row.map((cell, column) => (column === 0 ? String(cell).padEnd(widths[column]) : String(cell).padStart(widths[column]))).join('  ').trimEnd();
   return [line(header), widths.map(width => '-'.repeat(width)).join('  '), ...rows.map(line)].join('\n');
