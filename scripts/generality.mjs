@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { extractRuleSheet } from '../lib/rules/extract.js';
 import { cleanPastedText, readGuidelines } from '../lib/guidelines/read.js';
+import { pageText } from '../lib/guidelines/pdf-text.js';
 import { normalizeForMatch } from '../lib/rules/quote.js';
 import { DOC_TYPES } from '../lib/rules/schema.js';
 import { modelControls } from '../server/model.js';
@@ -330,7 +331,7 @@ function nodeExtractors() {
         const document = mupdf.Document.openDocument(bytes, 'application/pdf');
         try {
           const pages = [];
-          for (let index = 0; index < document.countPages(); index += 1) pages.push(document.loadPage(index).toStructuredText().asText());
+          for (let index = 0; index < document.countPages(); index += 1) pages.push(pageText(document.loadPage(index)));
           return pages.join('\n\n');
         } finally {
           document.destroy();

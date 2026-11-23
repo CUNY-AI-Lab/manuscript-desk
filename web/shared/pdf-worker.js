@@ -4,7 +4,9 @@
 // cannot load or cannot open the file.
 // MuPDF is loaded from the vendored copy next to this file (dist/vendor/mupdf), never from a CDN. The
 // import is dynamic so the message listener exists from the start and no message is missed while
-// MuPDF's WebAssembly loads.
+// MuPDF's WebAssembly loads. pageText (lib/) is bundled into this file by scripts/build.mjs.
+import { pageText } from '../../lib/guidelines/pdf-text.js';
+
 const loading = import('../vendor/mupdf/mupdf.js').catch(() => null);
 
 function pdfText(mupdf, bytes) {
@@ -14,12 +16,7 @@ function pdfText(mupdf, bytes) {
     for (let i = 0; i < doc.countPages(); i++) {
       const page = doc.loadPage(i);
       try {
-        const stext = page.toStructuredText();
-        try {
-          texts.push(stext.asText());
-        } finally {
-          stext.destroy();
-        }
+        texts.push(pageText(page));
       } finally {
         page.destroy();
       }

@@ -3,6 +3,7 @@
 //   guidelines.docx  a minimal Word file (a zip of three XML parts, stored uncompressed)
 //   guidelines.pdf   a two-page PDF with a text layer
 //   scanned.pdf      a one-page PDF holding only an image, no text layer
+//   tight.pdf        a one-page PDF whose first line has gaps but no space characters between its words
 import { writeFileSync } from 'node:fs';
 import { crc32 } from 'node:zlib';
 import * as mupdf from 'mupdf';
@@ -110,4 +111,15 @@ const image = scannedPdf.addImage(new mupdf.Image(pixmap));
 scannedPdf.insertPage(-1, scannedPdf.addPage(LETTER, 0, { XObject: { Im0: image } }, 'q 468 0 0 234 72 486 cm /Im0 Do Q'));
 writeFileSync(here('scanned.pdf'), scannedPdf.saveToBuffer('compress,garbage').asUint8Array());
 
-console.log('Wrote guidelines.docx, guidelines.pdf and scanned.pdf');
+// Tightly justified type: the first line shows each word of the sentence as its own string in one TJ
+// array, with no space characters, and moves the pen 0.15 x the font size between words (in TJ, -150
+// is 150/1000 of the font size to the right). The second line is the same sentence typed with spaces.
+const TIGHT_SENTENCE = 'When applicable the volume includes a list of abbreviations';
+const tightPdf = new mupdf.PDFDocument();
+const tightFont = tightPdf.addSimpleFont(new mupdf.Font('Helvetica'));
+const gapped = `[${TIGHT_SENTENCE.split(' ').map(pdfString).join(' -150 ')}] TJ`;
+const tightContents = `BT /F1 11 Tf 16 TL 72 720 Td ${gapped} T* ${pdfString(TIGHT_SENTENCE)} Tj ET`;
+tightPdf.insertPage(-1, tightPdf.addPage(LETTER, 0, { Font: { F1: tightFont } }, tightContents));
+writeFileSync(here('tight.pdf'), tightPdf.saveToBuffer('compress,garbage').asUint8Array());
+
+console.log('Wrote guidelines.docx, guidelines.pdf, scanned.pdf and tight.pdf');

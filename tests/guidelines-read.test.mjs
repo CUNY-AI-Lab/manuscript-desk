@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import * as mupdf from 'mupdf';
 import mammoth from 'mammoth';
 import { readGuidelines, cleanPastedText, MAX_GUIDELINES_CHARS, MIN_GUIDELINES_CHARS } from '../lib/guidelines/read.js';
+import { pageText } from '../lib/guidelines/pdf-text.js';
 
 // MuPDF's warnings about the deliberately damaged files would clutter the test output.
 mupdf.setLog(() => {});
@@ -17,7 +18,14 @@ const extractors = {
     const doc = mupdf.Document.openDocument(bytes, 'application/pdf');
     try {
       const texts = [];
-      for (let i = 0; i < doc.countPages(); i++) texts.push(doc.loadPage(i).toStructuredText().asText());
+      for (let i = 0; i < doc.countPages(); i++) {
+        const page = doc.loadPage(i);
+        try {
+          texts.push(pageText(page));
+        } finally {
+          page.destroy();
+        }
+      }
       return texts.join('\n\n');
     } finally {
       doc.destroy();
@@ -124,7 +132,7 @@ test('cleanPastedText trims, rejects under 200 characters, rejects over the limi
 });
 
 test('the fixtures are small', async () => {
-  for (const name of ['guidelines.docx', 'guidelines.pdf', 'scanned.pdf']) assert.ok((await fixture(name)).length < 50_000, name);
+  for (const name of ['guidelines.docx', 'guidelines.pdf', 'scanned.pdf', 'tight.pdf']) assert.ok((await fixture(name)).length < 50_000, name);
 });
 
 // The browser's PDF worker, run in Node against the vendored MuPDF (npm run vendor; npm run check runs it first).
@@ -145,6 +153,10 @@ test('the PDF worker replies with the pages\' text, or ok: false for a file MuPD
   const reply = await ask(7, pdf);
   assert.deepEqual(reply, { id: 7, ok: true, text: await extractors.extractPdf(pdf) });
   assert.match(reply.text, /\n\n/);
+  const tight = await fixture('tight.pdf');
+  const tightReply = await ask(10, tight);
+  assert.deepEqual(tightReply, { id: 10, ok: true, text: await extractors.extractPdf(tight) });
+  assert.ok(tightReply.text.startsWith('When applicable the volume includes a list of abbreviations\n'), tightReply.text);
   assert.deepEqual(await ask(8, new TextEncoder().encode('%PDF-1.7 truncated')), { id: 8, ok: false });
   assert.deepEqual(await ask(9, undefined), { id: 9, ok: false });
 });
