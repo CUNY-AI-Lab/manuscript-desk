@@ -179,3 +179,11 @@ test('the page runs the pass after labelling, for the document type chosen in st
   assert.equal(article.structured, undefined, 'a count from an earlier run does not stay');
   assert.equal(afterLabelling(labels, { roles, failures: [] }).roles[7], 'heading-1', 'without the paragraphs, the roles are the model’s');
 });
+
+test('the outline level and front matter at that level are one sign, not two', () => {
+  next = 0;
+  const level = { styleName: 'heading 1', outline: 0, newPage: false, toc: null };
+  const list = [entry('Acknowledgments', level), entry('Thanks.'), entry('A Section', level), entry('Text.'), entry('Another Section', level), entry('More.'), entry('Bibliography', level), entry('An entry.')];
+  const roles = { 0: 'front-matter-heading', 1: 'body', 2: 'heading-1', 3: 'body', 4: 'heading-1', 5: 'body', 6: 'bibliography-heading', 7: 'bibliography-entry' };
+  assert.equal(structureRoles(list, roles, { docType: 'monograph' }).changes.length, 0);
+});
