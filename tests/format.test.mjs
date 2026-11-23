@@ -214,10 +214,13 @@ test('an author line that names the institution in brackets is split from it', (
   const run = format([], { authorWithAffiliation: true });
   assert.equal(unitWith(run.result.bytes, 'Ada Placeholder').text, 'Ada Placeholder');
   assert.equal(unitWith(run.result.bytes, 'Ada Placeholder').styleName, 'Chapter Author');
-  assert.equal(unitWith(run.result.bytes, 'University of Elsewhere').text, '(University of Elsewhere)');
+  // The brackets around the whole affiliation go too, as tracked deletions.
+  assert.equal(unitWith(run.result.bytes, 'University of Elsewhere').text, 'University of Elsewhere');
   assert.equal(unitWith(run.result.bytes, 'University of Elsewhere').styleName, 'Chapter Affiliation');
+  assert.equal(declared(run.result, DECLARED.affiliationBrackets), 2);
   const check = wordCheck(run);
-  assert.equal(check.removed + check.added, 0, 'the words are the same, now in two paragraphs');
+  assert.equal(check.undeclaredRemoved + check.undeclaredAdded, 0, 'every changed word is declared');
+  assert.match(part(run.result.bytes, 'word/document.xml'), /<w:del [^>]*w:author="CAIL Manuscript Desk"[^>]*><w:r>(?:<w:rPr>[^]*?<\/w:rPr>)?<w:delText xml:space="preserve">\(<\/w:delText>/);
 });
 
 test('style ids, names and values from the document that hold " < & \' > are escaped, never written as markup', () => {
