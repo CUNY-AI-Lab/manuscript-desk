@@ -16,7 +16,7 @@ await cp('web/shared/styles.css', 'dist/shared/styles.css');
 await cp('web/vendor/mupdf', 'dist/vendor/mupdf', { recursive: true });
 await cp('LICENSE', 'dist/LICENSE.txt');
 await build({
-  entryPoints: ['web/format/app.js', 'web/shared/pdf-worker.js'], outbase: 'web', outdir: 'dist',
+  entryPoints: ['web/format/app.js', 'web/shared/pdf-worker.js', 'web/shared/guidelines-extractors.js'], outbase: 'web', outdir: 'dist',
   bundle: true, format: 'esm', platform: 'browser', sourcemap: true, target: ['es2022'], minify: false,
   external: ['../vendor/mupdf/*'],
 });
