@@ -22,7 +22,9 @@ async function files(directory) {
 
 test('no file under web/ uses an HTML sink', async () => {
   const checked = await files(WEB);
-  assert.ok(checked.some(path => path.endsWith('format/app.js')) && checked.some(path => path.endsWith('format/rules-view.js')), 'the page scripts are checked');
+  for (const script of ['app.js', 'rules-view.js', 'manuscript-step.js', 'manuscript-state.js', 'output-step.js', 'output-state.js']) {
+    assert.ok(checked.some(path => path.endsWith(`format/${script}`)), `format/${script} is checked`);
+  }
   const offenders = [];
   for (const path of checked) {
     (await readFile(path, 'utf8')).split('\n').forEach((line, index) => {

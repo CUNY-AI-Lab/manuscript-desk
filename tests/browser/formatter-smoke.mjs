@@ -1,4 +1,4 @@
-// Browser smoke test of the built Formatter page, with the four API routes mocked by request
+// Browser smoke test of the built Formatter page, with the API routes mocked by request
 // interception. Not part of `npm test`: it needs a browser and Playwright, which is not a dependency.
 //   npm run build
 //   PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs node tests/browser/formatter-smoke.mjs
@@ -10,6 +10,10 @@ import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { DEFAULT_MODEL } from '../../web/shared/models.js';
 import { LOADED_NOTICE } from '../../web/format/app.js';
+import { readDocx } from '../../lib/docx/read.js';
+import { validateDocx } from '../../lib/docx/validate.js';
+import { buildOutputs } from '../../web/format/output-state.js';
+import { RULES, manuscript, sheetWith } from '../manuscript-fixture.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const { chromium } = playwright.default ?? playwright;
@@ -115,14 +119,14 @@ try {
   assert.deepEqual(await rule.locator('.rule-settings li').allTextContents(), ['Quotation marks: Double (“ ”)']);
   assert.equal(await page.locator('#category-quotations').textContent(), 'Quotations');
   assert.equal(await rule.getByLabel('What to do').inputValue(), 'fix');
-  assert.equal(calls.length, 3, 'one call per group of a monograph');
+  assert.equal(calls.length, 6, 'two readings per group of a monograph');
   for (const { body, headers } of calls) {
     assert.equal(body.model, DEFAULT_MODEL);
     assert.equal(body.docType, 'monograph');
     assert.ok(body.text.includes(SENTENCE) && !body.text.includes('\r'));
     assert.equal(headers['content-type'], 'application/json');
   }
-  log('read: 3 calls (style, references, structure); the traced rule shows with its quotation and its setting in words; notice counts the left-out one');
+  log('read: 6 calls (style, references, structure, each read twice); the traced rule shows once with its quotation and its setting in words; notice counts the left-out one');
 
   const toggle = rule.getByRole('switch', { name: 'Use this rule' });
   await toggle.uncheck();
@@ -287,10 +291,11 @@ try {
   // ---- A failed group, "Try again", and two rules that disagree ----
   const SINGLE = 'Single quotation marks are kept for quotations within quotations.';
   const context4 = await browser.newContext();
-  let referencesFail = true;
+  // Both readings of the references group fail on the first reading of the guidelines.
+  let referencesFail = 2;
   const calls4 = await mock(context4, (route, body) => {
-    if (body.group === 'references' && referencesFail) {
-      referencesFail = false;
+    if (body.group === 'references' && referencesFail > 0) {
+      referencesFail -= 1;
       return json(route, { error: { code: 'invalid_model_response', message: 'The model returned an empty answer.', request_id: 'r' } }, 502);
     }
     return json(route, { request_id: 'r', content: JSON.stringify({ rules: body.group === 'style' ? [
@@ -323,7 +328,7 @@ try {
   const before = calls4.length;
   await page4.getByRole('button', { name: 'Try again' }).click();
   await page4.locator('.rule', { hasText: 'Use endnotes.' }).waitFor();
-  assert.equal(calls4.length - before, 1, 'only the failed part is read again');
+  assert.equal(calls4.length - before, 2, 'only the failed part is read again (twice, as every part is)');
   assert.equal(await page4.getByRole('button', { name: 'Try again' }).count(), 0);
   await page4.locator('.conflicts .rule', { hasText: 'Use single quotation marks.' }).getByRole('button', { name: 'Keep this rule' }).click();
   assert.equal(await page4.locator('.conflicts').count(), 0);
@@ -357,7 +362,7 @@ try {
   const before6 = calls6.length;
   await page6.getByRole('button', { name: 'Read the guidelines' }).click();
   await page6.locator('#error-banner', { hasText: 'The guidelines could not be read, so the rule sheet below was not changed.' }).waitFor();
-  assert.equal(calls6.length - before6, 3, 'every call failed');
+  assert.equal(calls6.length - before6, 6, 'every call failed');
   assert.deepEqual(await page6.locator('#error-banner p').allTextContents(), [
     'The guidelines could not be read, so the rule sheet below was not changed.',
     'Your model allowance is used up, so this part was not read.',
@@ -390,6 +395,124 @@ try {
   assert.equal(await page5.locator('#announcer').textContent(), 'Stopped. The rule sheet was not changed.');
   log('"Stop" ended a running read and said so');
   await context5.close();
+
+
+  // ---- Steps 4 to 6: the manuscript, its labels, formatting and the downloads ----
+  // tests/fixtures/manuscript.docx and manuscript-other.docx are written by tests/fixtures/make-manuscripts.mjs.
+  const { roles: GOLD } = manuscript();
+  const MANUSCRIPT = join(FIXTURES, 'manuscript.docx');
+  const OTHER = join(FIXTURES, 'manuscript-other.docx');
+  const source = new Uint8Array(await readFile(MANUSCRIPT));
+  const { paragraphs } = readDocx(source);
+  // The mocked model labels every paragraph as the fixture says (body where it says nothing), except
+  // that it calls the first block quotation verse: the one label the scholar corrects.
+  const wrong = Number(Object.keys(GOLD).find(index => GOLD[index] === 'block-quotation'));
+  const labelLines = passage => [...passage.split('Label these:')[1].split('\n\n')[0].matchAll(/^\[(\d+)\]/gm)].map(match => Number(match[1]));
+  const sheet7 = sheetWith([RULES.restart, RULES.numbered, RULES.split, RULES.markers, ['running-title.length', 'length', { max: 30 }]]);
+  const TITLES = JSON.stringify({ titles: { 1: 'Paper Lanterns', 2: 'Glass Bells' } });
+  const context7 = await browser.newContext({ acceptDownloads: true });
+  await mock(context7, route => json(route, { request_id: 'r', content: '{"rules":[]}' }));
+  const roleCalls = [];
+  const titleCalls = [];
+  await context7.route('**/manuscript/api/roles', route => {
+    const body = JSON.parse(route.request().postData());
+    roleCalls.push(body);
+    return json(route, { request_id: 'r', content: JSON.stringify({ roles: Object.fromEntries(labelLines(body.passage).map(index => [index, index === wrong ? 'verse' : GOLD[index] ?? 'body'])) }) });
+  });
+  await context7.route('**/manuscript/api/running-titles', route => { titleCalls.push(JSON.parse(route.request().postData())); return json(route, { request_id: 'r', content: TITLES }); });
+  const page7 = await context7.newPage();
+  watch(page7);
+  await page7.goto(pageUrl);
+  await page7.waitForFunction(model => document.getElementById('roles-model-select').value === model, DEFAULT_MODEL);
+  assert.match(await page7.locator('#privacy').textContent(), /passages of their text are sent .* not the manuscript or its text/);
+  assert.equal(await page7.locator('#format-button').isDisabled(), true, 'nothing to format yet');
+  await page7.setInputFiles('#sheet-file', { name: 'sheet.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(sheet7)) });
+  await page7.locator('.rule').first().waitFor();
+  await page7.setInputFiles('#manuscript-file', MANUSCRIPT);
+  await page7.locator('#manuscript-status', { hasText: '33 paragraphs' }).waitFor();
+  assert.match(await page7.locator('#manuscript-status').textContent(), /manuscript\.docx\d[\d,]* words in 33 paragraphs/);
+  assert.match(await page7.locator('#roles-plan').textContent(), /^Labelling sends 33 paragraphs to the model in 1 passage, one model call each/);
+  log('step 4: the manuscript is read in the page, with its size; step 5 states the model calls before any is made');
+
+  await page7.getByRole('button', { name: 'Read the manuscript' }).click();
+  await page7.locator('#review .review-item').first().waitFor();
+  assert.equal(roleCalls.length, 1);
+  assert.equal(roleCalls[0].model, DEFAULT_MODEL);
+  assert.match(await page7.locator('#damaging-notice').textContent(), /most damaging mistake/);
+  const selects = page7.locator('#review .review-item select');
+  const shownRoles = await selects.evaluateAll(list => list.map(select => select.value));
+  assert.ok(shownRoles.length > 10 && !shownRoles.includes('body') && !shownRoles.includes('bibliography-entry'), 'by default only paragraphs that are not body text or bibliography entries');
+  assert.equal(await page7.locator('#review details.review-chapter').count(), 2, 'two chapters (the front matter is all body text here, so it has nothing to check)');
+  assert.match(await page7.locator('#role-counts').textContent(), /Verse: 4/);
+  const row = page7.locator(`#para-${wrong}`);
+  assert.equal(await row.locator('select').inputValue(), 'verse');
+  await row.getByRole('button', { name: 'Show neighbours' }).click();
+  assert.equal(await page7.locator(`#para-${wrong}-near li`).count(), 4);
+  await row.getByLabel('What it is').selectOption('block-quotation');
+  assert.match(await row.locator('.review-note').textContent(), /^Changed by you\. The model said: Verse\.$/);
+  assert.match(await page7.locator('#role-counts').textContent(), /Verse: 3/);
+  await page7.getByLabel('Show').selectOption('all');
+  assert.equal(await page7.locator('#review .review-item').count(), 33, 'the filter shows every paragraph');
+  await page7.getByLabel('Show').selectOption('check');
+  log('step 5: one call labelled the paragraphs; the review shows what is not body text by chapter, with the warning, counts, neighbours and an "everything" filter; one label corrected');
+
+  await page7.getByRole('button', { name: 'Format the manuscript' }).click();
+  await page7.locator('#output .downloads button').first().waitFor();
+  assert.equal(titleCalls.length, 1, 'running titles asked once, because a rule asks for them');
+  const corrected = { ...Object.fromEntries(Object.keys(GOLD).concat(paragraphs.filter(entry => entry.text.trim()).map(entry => String(entry.index))).map(index => [index, GOLD[index] ?? 'body'])) };
+  const expected = await buildOutputs({ bytes: source, paragraphs, roles: corrected, sheet: sheet7, name: 'manuscript.docx', proposeTitles: async () => TITLES });
+  assert.equal(expected.ok, true);
+  const buttons = page7.locator('#output .downloads button');
+  assert.deepEqual(await buttons.allTextContents(), expected.files.map(file => `Download ${file.name}`));
+  for (let at = 0; at < expected.files.length; at += 1) {
+    const [file] = await Promise.all([page7.waitForEvent('download'), buttons.nth(at).click()]);
+    assert.equal(file.suggestedFilename(), expected.files[at].name);
+    const path = join(scratch, file.suggestedFilename());
+    await file.saveAs(path);
+    const got = new Uint8Array(await readFile(path));
+    const validity = validateDocx(got);
+    assert.equal(validity.ok, true, `${file.suggestedFilename()} passes the structural validator`);
+    if (expected.files[at].id === 'manuscript') {
+      assert.equal(validity.counts.comments, validateDocx(expected.files[at].bytes).counts.comments);
+      assert.ok(validity.counts.comments > 1 && validity.counts.revisions > 0);
+    }
+  }
+  assert.match(await page7.locator('#output-status').textContent(), /^Formatted\. \d+ comments in the file/);
+  assert.ok((await page7.locator('#summary-changed + ul li').count()) > 3);
+  log(`step 6: formatted in the page; ${expected.files.length} downloads (${expected.files.map(file => file.id).join(', ')}), each a valid Word file; the manuscript has the expected ${validateDocx(expected.files[0].bytes).counts.comments} comments`);
+
+  await page7.reload();
+  await page7.locator('#file-notice', { hasText: 'Labels for manuscript.docx are kept in this browser' }).waitFor();
+  await page7.setInputFiles('#manuscript-file', MANUSCRIPT);
+  await page7.locator('#file-notice', { hasText: 'This is the file labelled before' }).waitFor();
+  await page7.locator(`#para-${wrong}`).waitFor();
+  assert.equal(await page7.locator(`#para-${wrong} select`).inputValue(), 'block-quotation', 'the correction came back');
+  assert.equal(roleCalls.length, 1, 'labelling is not repeated after a reload');
+  assert.equal(await page7.locator('#format-button').isDisabled(), false);
+  log('after a reload the same file is chosen again: its labels and the correction come back, and no labelling call is made');
+
+  await page7.setInputFiles('#manuscript-file', OTHER);
+  await page7.locator('#file-notice', { hasText: 'The labels kept in this browser are for another file' }).waitFor();
+  assert.equal(await page7.locator('#review .review-item').count(), 0, 'no labels are shown for another file');
+  assert.equal(await page7.locator('#format-button').isDisabled(), true);
+  const asked7 = dialogs.length;
+  await page7.getByRole('button', { name: 'Read the manuscript' }).click();
+  await page7.locator('#review .review-item').first().waitFor();
+  assert.equal(dialogs.length, asked7 + 1, 'a question before replacing the saved labels');
+  assert.equal(roleCalls.length, 2, 'another file is labelled from the start');
+  log('a different file is said to be another file and is labelled from the start, after a question');
+  await context7.close();
+
+  // ---- A manuscript that cannot be read gets the reader's message ----
+  const context8 = await browser.newContext();
+  await mock(context8, route => json(route, { request_id: 'r', content: '{"rules":[]}' }));
+  const page8 = await context8.newPage();
+  watch(page8);
+  await page8.goto(pageUrl);
+  await page8.setInputFiles('#manuscript-file', { name: 'notes.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('plain text, not a Word file') });
+  await page8.locator('#error-banner', { hasText: 'notes.docx: This is not a Word (.docx) file.' }).waitFor();
+  log('a file that is not a Word file gets the reader\'s plain message');
+  await context8.close();
 
   assert.deepEqual(problems, [], 'no page errors or console errors');
   log('no page errors and no console errors');

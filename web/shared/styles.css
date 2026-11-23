@@ -112,6 +112,30 @@ progress::-moz-progress-bar { background: var(--primary-blue); }
 .conflicts { border: 1px solid #e6c98f; background: #fffaef; border-radius: 10px; padding: 4px 18px 10px; margin-bottom: 8px; }
 .conflicts h3 { margin-top: 16px; }
 .conflict .rule .button { margin-top: 4px; }
+.role-counts { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .875rem; color: var(--text-muted); }
+.review-filter { margin: 0 0 8px; }
+.review-filter select { max-width: 100%; }
+.review-group, .review-chapter { margin: 0 0 14px; }
+.review-chapter summary { cursor: pointer; font-weight: 500; padding: 8px 0; overflow-wrap: anywhere; }
+.review-list { list-style: none; padding: 0; margin: 0; }
+.review-item { border-top: 1px solid #e8eaef; padding: 12px 0; }
+.review-item.corrected { border-left: 3px solid var(--primary-blue); padding-left: 12px; }
+.review-excerpt { margin: 0 0 8px; font: .95rem/1.6 var(--serif); overflow-wrap: anywhere; }
+.review-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+.review-controls .field { margin: 0; }
+.review-controls select { max-width: 100%; }
+.review-note { margin: 6px 0 0; }
+.review-note:empty { display: none; }
+.review-near ul { list-style: none; padding: 8px 0 0 12px; margin: 0; font-size: .875rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.review-near li { margin: 0 0 4px; }
+.near-role { font-weight: 500; }
+.downloads { list-style: none; padding: 0; margin: 0 0 20px; }
+.downloads li { padding: 8px 0; border-top: 1px solid #e8eaef; }
+.downloads .button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.downloads .help { margin: 4px 0 0; }
+.summary-part h3 { margin-top: 18px; }
+.summary-list { margin: 0 0 8px; padding-left: 20px; font-size: .925rem; }
+.summary-list li { margin: 0 0 4px; overflow-wrap: anywhere; }
 .sidebar { display: grid; gap: 24px; }
 .quota-panel { background: #edf2fa; border: 1px solid #d8e2f2; border-radius: 12px; padding: 22px; }
 .aside-heading { display: flex; align-items: center; justify-content: space-between; }

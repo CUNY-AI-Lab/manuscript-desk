@@ -1,6 +1,8 @@
-// The Formatter page, steps 1 to 3: what is being submitted, the guidelines, and the review of the
-// rule sheet read out of them. The functions exported at the top are pure, so tests load this module
-// under Node; the page itself starts only where there is a document.
+// The Formatter page. This module holds steps 1 to 3 (what is being submitted, the guidelines, and
+// the review of the rule sheet read out of them) and starts the page; steps 4 and 5 (the manuscript
+// and its paragraph labels) are in manuscript-step.js and step 6 (format and download) in
+// output-step.js. The functions exported at the top are pure, so tests load this module under Node;
+// the page itself starts only where there is a document.
 
 import { DOC_TYPES, GROUPS, MAX_RULES, SHEET_VERSION, newSheet, validateRule, validateSheet } from '../../lib/rules/schema.js';
 import { extractRuleSheet } from '../../lib/rules/extract.js';
@@ -11,6 +13,8 @@ import { ApiError, createApi } from '../shared/api.js';
 import { chooseModel, modelMenu } from '../shared/models.js';
 import { createStore } from '../shared/store.js';
 import { el, plainReason, renderAddRule, renderRules } from './rules-view.js';
+import { createManuscriptStep } from './manuscript-step.js';
+import { createOutputStep } from './output-step.js';
 
 const MAX_SHEET_FILE_CHARS = 2000000;
 const NOT_A_SHEET = 'This is not a rule sheet file.';
@@ -230,7 +234,10 @@ function start() {
   // Saves the work so far (never the files themselves); before the saved copy is read back, nothing
   // is written, so an early save cannot overwrite it.
   const save = () => (store && restored ? queue(() => store.saveJob('format', structuredClone(savedState(state)))) : saving);
-  const api = createApi({ onLostSession: save });
+  // A lost sign-in saves everything first: the rule sheet and the paragraph labels done so far.
+  const api = createApi({ onLostSession: () => Promise.all([save(), manuscript.save()]) });
+  // Steps 4 to 6 share the manuscript, held in memory only, and its labels.
+  const job = { file: null, labels: null, labelling: null, formatting: false, output: null };
   let extractors = null;
   // The PDF and Word readers (mammoth is large) load only when the first file is added.
   const loadExtractors = () => {
@@ -265,6 +272,8 @@ function start() {
       el('span', { className: 'help', text: plural(entry.text.length, 'character', 'characters') }),
       el('button', { type: 'button', className: 'text-button danger', text: 'Remove', 'aria-label': `Remove ${entry.name}`, onclick: () => removeSource(index) }))));
     renderSheet();
+    manuscript.render();
+    output.render();
   }
 
   function renderSheet() {
@@ -287,6 +296,7 @@ function start() {
     renderRules($('rules'), { sheet, editingId: state.editingId }, ruleActions);
     renderAddRule($('add-rule-area'), { docType: state.docType, open: state.adding }, addActions);
     $('download-sheet').disabled = !sheet;
+    output.render();
   }
 
   // Applies a sheet change; `quiet` leaves the page as the control already shows it, so focus stays.
@@ -472,8 +482,9 @@ function start() {
   }
 
   function startOver() {
-    if ((state.guidelines.length || state.sheet) && !confirm('Start over? This clears the guidelines and the rule sheet from this browser.')) return;
+    if ((state.guidelines.length || state.sheet || job.labels || job.file) && !confirm('Start over? This clears the guidelines, the rule sheet, the manuscript and its paragraph labels and your corrections from this page and this browser.')) return;
     state.running?.abort();
+    manuscript.startOver();
     Object.assign(state, { docType: null, guidelines: [], sheet: null, failures: [], loadedFromFile: false, editingId: null, adding: false });
     $('paste-box').value = '';
     showErrors([]);
@@ -520,6 +531,10 @@ function start() {
       select.replaceChildren(...menu.map(entry => el('option', { value: entry.id, text: entry.label })));
       select.value = chooseModel(chosen, menu);
       $('model-help').textContent = menu.length ? 'Reading the guidelines uses your shared CUNY AI Lab allowance.' : 'No model is available right now. Reload the page later.';
+      const roles = $('roles-model-select');
+      const rolesChosen = roles.dataset.chosen === 'true' ? roles.value : '';
+      roles.replaceChildren(...menu.map(entry => el('option', { value: entry.id, text: entry.label })));
+      roles.value = chooseModel(rolesChosen, menu);
     } catch {
       $('model-help').textContent = 'The list of models could not be loaded. Reload the page to try again.';
     }
@@ -533,6 +548,7 @@ function start() {
   });
   $('add-pasted').addEventListener('click', addPasted);
   $('model-select').addEventListener('change', () => { $('model-select').dataset.chosen = 'true'; });
+  $('roles-model-select').addEventListener('change', () => { $('roles-model-select').dataset.chosen = 'true'; });
   $('read-button').addEventListener('click', () => void read());
   $('stop-button').addEventListener('click', () => state.running?.abort());
   $('download-sheet').addEventListener('click', downloadSheet);
@@ -545,11 +561,22 @@ function start() {
   $('start-over').addEventListener('click', startOver);
   $('refresh-quota').addEventListener('click', () => void refreshStatus());
 
+  const stepContext = {
+    $, api, store, queue, job, state, announce, showErrors, isRestored: () => restored,
+    changed: ({ focusId } = {}) => { render(); if (focusId) focus(focusId); },
+    refreshStatus: () => refreshStatus(),
+    roles: () => manuscript.roles(),
+    renderOutput: () => output.render(),
+  };
+  const manuscript = createManuscriptStep(stepContext);
+  const output = createOutputStep(stepContext);
+
   (async () => {
     render();
     try {
       if (store) Object.assign(state, restoredState(await store.loadJob('format')));
     } catch {}
+    await manuscript.restore();
     restored = true;
     render();
     void refreshStatus();

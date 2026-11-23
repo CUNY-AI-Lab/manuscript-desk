@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Read a publisher's or journal's submission guidelines into a rule sheet you can check, with CUNY AI Lab.">
+<meta name="description" content="Prepare a manuscript for a publisher's or journal's guidelines: a rule sheet you check, then a formatted Word file and a To-dos list, with CUNY AI Lab.">
 <title>Formatter | Manuscript Desk | CUNY AI Lab</title>
 <link rel="stylesheet" href="../shared/styles.css">
 <script type="module" src="app.js"></script>
@@ -15,7 +15,7 @@
 <nav aria-label="CUNY AI Lab"><a href="https://ailab.gc.cuny.edu/tools/">All tools</a><a href="https://tools.ailab.gc.cuny.edu/welcome">My account <span aria-hidden="true">↗</span></a></nav>
 </div></header>
 <main id="main" class="wrap">
-<div class="hero"><div><p class="breadcrumb"><a href="../">Manuscript Desk</a> <span aria-hidden="true">/</span> Formatter</p><h1>Formatter</h1><p class="subtitle">Turn a publisher's or journal's guidelines into a rule sheet you can check.</p></div><button class="text-button" id="start-over" type="button">Start over</button></div>
+<div class="hero"><div><p class="breadcrumb"><a href="../">Manuscript Desk</a> <span aria-hidden="true">/</span> Formatter</p><h1>Formatter</h1><p class="subtitle">Turn a publisher's or journal's guidelines into a rule sheet you check, then format your manuscript to it and see what is left for you to do.</p></div><button class="text-button" id="start-over" type="button">Start over</button></div>
 <p id="announcer" class="sr-only" role="status" aria-live="polite"></p>
 <div class="workspace"><div class="work-column">
 <div id="error-banner" class="notice error" role="alert" hidden></div>
@@ -47,7 +47,7 @@
 <select id="model-select" aria-describedby="model-help"></select>
 <p id="model-help" class="help">Loading the list of models…</p>
 </fieldset>
-<p class="privacy">The file is opened in the browser and is not uploaded. Passages of text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms. Nothing is stored on the server. Work in progress is kept in this browser only, and is cleared when you choose Start over or after 24 hours.</p>
+<p class="privacy" id="privacy">Your files are opened in this browser and are not uploaded. To read the guidelines and to label the manuscript's paragraphs, passages of their text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when the rule sheet asks for running titles, the chapter titles are sent the same way. The manuscript is formatted in this browser. Nothing is stored on the server. This browser keeps the guidelines' text, the rule sheet, the paragraph labels and your corrections to them, but not the manuscript or its text, and clears them when you choose Start over or after 24 hours.</p>
 <div class="panel-actions"><button id="read-button" class="button primary" type="button">Read the guidelines</button><button id="stop-button" class="button secondary" type="button" hidden>Stop</button></div>
 </section>
 
@@ -67,6 +67,42 @@
 </div>
 </div>
 </section>
+
+<section class="panel" aria-labelledby="manuscript-title">
+<h2 id="manuscript-title" tabindex="-1">4. Manuscript</h2>
+<p class="section-intro">Choose the manuscript as one Word (.docx) file. It is read in this browser and is not uploaded; it stays in this page's memory until you close or reload the page.</p>
+<fieldset id="manuscript-controls" class="plain">
+<legend class="sr-only">Choose the manuscript</legend>
+<label for="manuscript-file">Choose the manuscript (Word .docx)</label>
+<input id="manuscript-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+</fieldset>
+<div id="manuscript-status" aria-live="polite"></div>
+</section>
+
+<section class="panel" aria-labelledby="roles-title">
+<h2 id="roles-title" tabindex="-1">5. What each paragraph is</h2>
+<p class="section-intro">The model reads the manuscript in passages and labels each paragraph: a chapter's title block, a heading, a quotation, verse, a bibliography entry, body text and so on. Each label decides the style the paragraph gets, so you check the labels before anything is formatted.</p>
+<fieldset id="roles-controls" class="plain">
+<legend class="sr-only">Label the paragraphs</legend>
+<label for="roles-model-select">Model</label>
+<select id="roles-model-select" aria-describedby="roles-plan"></select>
+<p id="roles-plan" class="help"></p>
+</fieldset>
+<div class="panel-actions"><button id="label-button" class="button primary" type="button">Read the manuscript</button><button id="label-stop" class="button secondary" type="button" hidden>Stop</button></div>
+<div id="roles-progress-area" hidden><p id="roles-progress-text" role="status" aria-live="polite"></p><progress id="roles-progress" max="1" value="0" aria-labelledby="roles-progress-text"></progress></div>
+<div id="roles-notices"></div>
+<div id="review"></div>
+</section>
+
+<section class="panel" aria-labelledby="output-title">
+<h2 id="output-title" tabindex="-1">6. Format and download</h2>
+<p class="section-intro">The manuscript is formatted in this browser to the rule sheet in step 3 and the labels in step 5. You get the formatted manuscript, with comments where something is left for you and the changes to its words as tracked changes; the To-dos list; and each companion document the rule sheet calls for.</p>
+<p id="output-plan" class="help"></p>
+<div class="panel-actions"><button id="format-button" class="button primary" type="button" disabled>Format the manuscript</button></div>
+<p id="output-status" role="status" aria-live="polite"></p>
+<div id="output-notices"></div>
+<div id="output"></div>
+</section>
 </div>
 
 <aside class="sidebar" aria-label="Your CUNY AI Lab account">
@@ -74,7 +110,7 @@
 <p id="session-status" class="session-status" role="status">Checking your CUNY session…</p>
 <div id="quota-content"><p class="help">Loading your shared usage estimate…</p></div>
 <a class="account-link" href="https://tools.ailab.gc.cuny.edu/welcome">Manage your CUNY AI Lab account</a></section>
-<section class="sidebar-note" aria-labelledby="note-title"><h2 id="note-title">Check every rule</h2><p>Each rule shows the sentence of the guidelines it came from. Rules the tool could not trace to the guidelines are left out.</p><p>Switch off any rule that does not apply to you, and download the rule sheet to reuse or share it.</p></section>
+<section class="sidebar-note" aria-labelledby="note-title"><h2 id="note-title">Check every rule and every label</h2><p>Each rule shows the sentence of the guidelines it came from. Rules the tool could not trace to the guidelines are left out. Switch off any rule that does not apply to you, and download the rule sheet to reuse or share it.</p><p>Check the paragraph labels before you format: a paragraph labelled wrongly gets the wrong style.</p></section>
 </aside>
 </div></main>
 <footer><div class="footer-inner"><span>© 2026 CUNY AI Lab</span><div><a href="https://ailab.gc.cuny.edu/">About the Lab</a><a href="../LICENSE.txt">GNU AGPL v3</a></div></div></footer>
