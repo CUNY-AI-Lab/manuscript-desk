@@ -79,3 +79,26 @@ test('normalizeForMatch handles soft hyphens, line-break hyphens, quotes, primes
 test('normalizeForMatch never throws on a non-string', () => {
   for (const bad of [undefined, null, 42, {}]) assert.equal(normalizeForMatch(bad), '');
 });
+
+test('rejects a match that starts or ends inside a longer number or word', () => {
+  assert.equal(findQuote('Abstracts must not exceed 25', 'Abstracts must not exceed 250 words.'), false);
+  assert.equal(findQuote('250 words including references', 'Manuscripts are limited to 1250 words including references.'), false);
+  // Whole words inside a longer sentence still count.
+  assert.equal(findQuote('is required of all authors', 'No fee is required of all authors'), true);
+});
+
+test('rejects a middle segment that only matches mid-word', () => {
+  assert.equal(findQuote('Please use double quotation marks ... otes should be footnotes ... in each chapter', G), false);
+});
+
+test('skips an occurrence that fails the word boundary for a later whole-word one', () => {
+  const g = 'Reviews: 1250 words including references. Notes: 250 words including references, written in English.';
+  assert.equal(findQuote('250 words including references', g), true);
+  assert.equal(findQuote('250 words including references ... written in English', g), true);
+  assert.equal(findQuote('Use the house style ... 250 words maximum', 'Use the house style: 1250 words maximum for reviews, 250 words maximum for notes.'), true);
+});
+
+test('rejects a segment without at least 8 letters or digits', () => {
+  assert.equal(findQuote('============', 'a ============ b'), false);
+  assert.equal(findQuote('Please use double quotation marks ... ============', 'Please use double quotation marks ============ b'), false);
+});
