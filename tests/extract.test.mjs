@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractRuleSheet } from '../lib/rules/extract.js';
 import { splitGuidelines } from '../lib/rules/chunk.js';
-import { GROUPS, validateSheet } from '../lib/rules/schema.js';
+import { GROUPS, MAX_RULES, validateSheet } from '../lib/rules/schema.js';
 
 // Guideline text written for these tests.
 const G0 = 'Use American spelling throughout, following Merriam-Webster. Please use double quotation marks for all quotations. '
@@ -167,6 +167,22 @@ test('drops an invented quote and reports it in sheet.dropped', async () => {
   assert.deepEqual(sheet.rules.map(rule => [rule.category, rule.params]), [['spelling', { variety: 'us' }], ['notes', { kind: 'footnotes' }], ['files', {}]]);
 });
 
+test('keeps the first 400 rules and counts the rest as dropped', async () => {
+  // 450 requirements, each with its own quotation, so none is a duplicate of another.
+  const many = Array.from({ length: 450 }, (_, n) => `Requirement number ${n} applies to every manuscript.`).join(' ');
+  const rule = n => ({ category: 'other', slot: null, statement: `Meet requirement ${n}.`, quote: `Requirement number ${n} applies`, mode: 'flag', params: {} });
+  const invented = { ...rule(0), quote: 'Requirement number 9999 applies' };
+  const { callRules } = fake(request => reply(request.group === 'structure' ? [...Array.from({ length: 450 }, (_, n) => rule(n)), invented] : []));
+  const { sheet, failures } = await run(callRules, { guidelines: [many] });
+  assert.deepEqual(failures, []);
+  assert.equal(MAX_RULES, 400);
+  assert.equal(sheet.rules.length, 400);
+  assert.equal(sheet.dropped, 51, 'the invented quote and the 50 rules past the limit');
+  assert.equal(sheet.rules[0].statement, 'Meet requirement 0.');
+  assert.equal(sheet.rules[399].statement, 'Meet requirement 399.');
+  assert.equal(validateSheet(sheet).ok, true);
+});
+
 test('takes manual.named from the first reply that names one', async () => {
   // The structure reply settles first, but references comes first in (document, part, group) order.
   const named = { style: null, references: '  The Chicago Manual of Style, 17th edition ', structure: 'MLA Handbook' };
@@ -194,6 +210,16 @@ test('reports progress up to the total', async () => {
   });
   await run(callRules, { guidelines: [G0, G1], onProgress: event => progress.push(event) });
   assert.deepEqual(progress, [1, 2, 3, 4, 5, 6].map(done => ({ done, total: 6 })));
+});
+
+test('an onProgress that throws does not end the run', async () => {
+  const { calls, callRules } = fake();
+  let seen = 0;
+  const { sheet, failures } = await run(callRules, { onProgress: () => { seen += 1; throw new Error('display broke'); } });
+  assert.equal(seen, 3);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(categories(sheet), ['spelling', 'notes', 'files']);
 });
 
 test('rejects when aborted', async () => {
