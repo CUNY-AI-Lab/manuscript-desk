@@ -271,3 +271,212 @@ $1.39 in all. The Gateway's own figure for the key over its 30-day window was $2
 calls stopped; that figure includes use of the key before this round (and by any other session using
 it), and no figure for this round alone was available, so paid calls stopped there to stay inside a
 $3 cap on either reading.
+
+## Round 2: chapter titles from the file, the page numbers' distance, the hanging indent, the title page
+
+Round 2 (2026-11-23), on the branch `dissertations-2`: four gaps the real thesis showed in round 9.
+Counts, measurements and generic descriptions only, as above.
+
+### 1. Chapter titles typed in Heading 1 read as section headings
+
+**The cause, from the cached answers first.** The thesis's labelling run (round 9) was kept, answer by
+answer. Each of its six chapter titles (an introduction, four numbered chapters, a conclusion, all in
+the Heading 1 style) was read in two overlapping passages: 10 of the 11 readings said `heading-1`, one
+said `title-block`, and the reconciliation kept a `heading-1` every time. The model also read the
+chapters' own sections (Heading 2) as `heading-1` in one chapter and `heading-2` in the others. What the
+passage showed of those titles: the style id ("style Heading1"), the alignment, the indents, the length;
+not that each starts a new page (the break is a section break at the end of the paragraph before, which
+the reader did not report), not the outline level, and not the contents list's levels (the file's
+contents list is one content control, which the passage shows as a single block of lines). The prompt
+defines a title block as "the title, subtitle, author names and affiliations at the start of a chapter
+or article", says the manuscript has "no paragraph styles", and has no sentence on a single-author
+work, whose chapter titles stand alone. So the model was given a style id that spells the wrong role
+and none of the evidence that tells a chapter from a section; the file has that evidence. A paid
+comparison on the passages that hold the chapter titles of both real dissertations measured what
+changes the model's reading (table below).
+
+**The fix: the file's own structure, after the labelling, the model's label deciding where it is
+silent.** The reader (`lib/docx/read.js`) now gives each paragraph, apart from the hints the passage
+shows (so the labelling passages, and every cached answer, are unchanged): its style's name and outline
+level (through the styles it is based on; a built-in "heading N" style counts as level N), whether it
+starts a new page (a page break before it, in its style or at the start of its text, or a page or
+section break at the end of the text before it), and its level in the file's contents list (by the
+list's links to bookmarks, or by a contents line with its words). A pass after the labelling
+(`lib/roles/structure.js`), for a monograph or a dissertation only, makes a paragraph the model called a
+heading a chapter's title block when two signs mark it as a top-level division: one that marks a level
+(the top outline level, the top level of the contents list, a "Chapter 3" label) and one that is not
+the style again (a new page, the contents list, a label); front or back matter headings at the same
+outline level count as a sign but never with the outline level alone. A heading so marked whose words name front or
+back matter heads that part; a label line before the title joins the title block; the headings of each
+chapter at the top level are levelled again under its title (by the contents list's level, else the
+outline level, when every heading has one; else, in a chapter the pass found, moved up when none is at
+the top). Title-block lines right after an abstract's heading, before the first chapter, are the
+abstract page's own title and author lines. The pass leaves the file alone when fewer than two headings
+are so marked, and when most of the chapters the model found itself, two or more, stand at another
+level (a book whose chapter titles have a style of their own and whose sections use Heading 1). Body
+text, front and back matter and title pages are never changed by it. The page runs it in step 5 and
+says how many chapter titles it found; `roles-eval` scores the roles before and after it;
+`format-eval --predicted` applies it.
+
+**Gold.** Set by hand for this round, privately, before the fix was measured: the thesis's structural
+paragraphs (title page, front matter headings, contents, chapter titles, headings by level, the
+bibliography's headings; 55 paragraphs, from the rendered PDF's numbering and the file's contents
+list), with a `scope` so that a paragraph not listed but predicted with one of those roles counts as an
+error. A second real document was found read-only on this Mac: the owner's own Graduate Center
+dissertation deposit, which uses Heading 1 for its chapters and a custom heading style for its front
+and back matter. Its 112 structural paragraphs were set by hand before any label of it was seen, and it
+was labelled once, fresh (58 calls).
+
+| | Thesis, before | Thesis, after | Second dissertation, before | Second dissertation, after |
+|---|---|---|---|---|
+| Chapters' structural paragraphs (titles, headings) | 3/25 | **24/25** | 7/25 | **25/25** |
+| Front and back matter, structural | 26/27 | 26/27 | 80/87 | **85/87** |
+| Chapters found by the formatter | 0 | 6 of 6 | 3 of 5 (one of them the abstract page) | 5 of 5 |
+| Paragraphs predicted as a scope role the gold does not list | 0 | 0 | 0 | 0 |
+
+The second dissertation is not a clean holdout: the pass as first written, on the thesis alone, changed
+nothing on it (the model had read its abstract page's title lines as a chapter title block, which
+tripped the guard against files whose chapters are found elsewhere), so the guard was narrowed, the
+abstract page rule added and the levelling extended to chapters the model found itself, after that
+result had been seen. The thesis's remaining errors: one heading set in the Heading 3 style that the
+file's numbering shows as a first-level section (the styles and the numbering disagree), the
+title page's table of names labelled as a table, and three archive names inside the bibliography read
+as its subheadings. The second's: two bold lines heading the items of a front-matter section, read as
+list items (the gold's judgment calls them headings).
+
+**What the model needs, measured.** The 11 passages of the thesis that hold its six chapter titles were asked
+again (`deepseek-v4.1-flash-1017`, 22 calls), each answer kept privately: once with the round's
+evidence written into the passage lines (outline level, "starts a new page", contents level), the
+prompt unchanged; once with the prompt given one sentence that a single-author work's chapter title is
+`title-block` though no author line follows it, the passage unchanged. Readings of a chapter title as
+`title-block`, out of 11: the cached run 1, with the evidence in the passage 1, with the sentence in the
+prompt 3. Neither change to what the model reads makes it find the chapters; the pass on the file's
+evidence finds all six. The same comparison on the second dissertation was stopped after one call (the
+Gateway was refusing most calls for its rate limit at the time), so it rests on the thesis alone.
+
+**Brill (an edited collection).** The labelling prompt and the passages are unchanged, so every cached
+answer was reused; the pass does not run for an edited collection, and forced as a monograph it
+changes 0 labels on the dev and holdout chapters (the file has no outline levels). The holdout chapters
+had not been labelled with the round 9 prompt, and round 9's dev result (232/260 structural) rested on
+one fresh run; both were labelled fresh this round:
+
+| | Round 6 (recorded) | Round 9 (one run) | Round 2 of this loop |
+|---|---|---|---|
+| Dev | 98.0% (250/260 structural) | 95.3% (232/260) | **98.0% (250/260)**, a fresh run |
+| Holdout | 99.0% (221/224) | not run | **99.0% (221/224)** |
+| Front matter | 57/57 | 57/57 | 57/57 |
+
+The dev confusions of the fresh run are round 6's (block quotation read as verse 8, and five others),
+so round 9's drop was the run-to-run variance it was taken for. `format-eval --chapters all` (gold
+roles, hand sheet: 1,353 of 1,383 matched, 99.4% style agreement, 46/46 title-block paragraphs, 175
+tracked changes, no undeclared word change, valid; predicted roles: 98.6%, 46/46) and `todos-eval
+--chapters all` give the same output as `main`.
+
+### 2. Page numbers 0.49 inch from the edge
+
+New setting `layout.page-number-distance` (inches): every section's header and footer distance is
+raised to at least that much. A section whose top or bottom margin would leave less than a quarter of
+an inch beyond the header or footer is listed for the author (Word would move the text), and so is a
+page number in a text box or frame fixed on the page, which a header distance does not move. Wired
+through the schema, the reading prompts (its use line), the rules view, the checklist and the summary;
+the Graduate Center sheet's "at least ¾” from any edge of page" rule now sets it to 0.75 (it was a rule
+to check).
+
+### 3. The bibliography's hanging indent 0.39 inch
+
+New setting `references.hanging-indent` (inches), applied to the Bibliography style (direct indents on
+entries are removed as before), with the same wiring; the Graduate Center sheet's checklist question
+"Is there a 0.5” hanging indent in this section?" now sets it to 0.5. The sheet keeps 39 rules, 13 with
+settings (11 applied by the formatter, 2 checked); `npm run check-preset` found every quotation on its
+page again.
+
+### 4. The title page read by position
+
+`titlePageParts` (`lib/format/titles.js`) reads each line of a whole work's title page by what it says:
+"by" or "Edited by", a date line (a year with months, seasons or the words of an academic year), an
+advisor's or a candidate's label, a submission statement, a program, an institution (with a line that
+goes on from it, such as one starting with "and"), a line of names; the author is the name after "by"
+or a candidate's label, else the last line of names not under an advisor's; the title is the first line
+that is none of these, and the lines of words right after it are its subtitles. The formatter's title
+page styles and the title-page check both use it. The check reads the page across a picture or a table
+between its lines (a logo, a table of the candidate's and advisors' names), cell by cell, and knows a few
+more degree, program and advisor words. Tests on invented pages in four orders: the Graduate Center's
+(title, "by", author, statement, institution, year); the university first, title near the end, the
+candidate and advisor under labels, the academic year last; the date and statement before the title,
+"Presented by" after it; a book's title in capitals that read like names, with "Edited by" and the
+editors' institutions. One expectation of an older test changed: an "Edited by" line after a one-line
+title is now a label, as the README says it is, not a subtitle.
+
+### Follow-ups the real files showed
+
+With chapters found, the contents check ran on both real dissertations and reported their chapters
+missing from the list and their section lines as matching nothing: a Word table of contents in a
+content control is one paragraph holding every line, a dissertation's contents list gives the sections
+too, a list of figures was read as part of the contents, and a heading that is only a label word
+("Appendix") had nothing to match. Each is fixed and tested; Brill's to-dos are unchanged.
+
+### The invented dissertation, before and after
+
+The same file and pipeline as in round 9 (`buildOutputs`, the built-in sheet), measured from the file
+and from LibreOffice's PDF. Every row of round 9's table is as it was, except:
+
+| Requirement | Before | After |
+|---|---|---|
+| Page numbers at least ¾ in from the edge | footer distance 0.49 in; PDF: the number 0.492 in from the bottom edge on 9 of 9 numbered pages | **met**: header and footer 0.75 in in all 4 sections; PDF: 0.750 in on 9 of 9; the lowest text 1.00 in from the bottom edge, 0.06 in above the number |
+| Bibliography hanging indent 0.5 in | 0.39 in (2 of 2 entries) | **met**: 0.50 in (2 of 2) |
+
+The rest, measured again: US Letter (4 sections; PDF 612 × 792 pt), 1-inch margins, body 7/7 at
+double spacing, abstract, dedication and contents 5/5, notes 2/2 single, smallest text 10 pt, front
+matter lower-case roman from i with the title page unnumbered (PDF: none, ii to vii), the chapters
+arabic from 1 (PDF: 1 to 3), numbers bottom centre throughout, notes restarting in every section, the
+same part order, missing parts and title page findings, no undeclared word change, every download
+valid. The pass changes nothing on this file (its roles are given).
+
+### The real thesis, before and after (counts only)
+
+The thesis of round 9, its labels from round 9's run (not reviewed), the built-in sheet; before is
+`main`, after is this branch with the pass. It is not a Graduate Center dissertation (an Italian
+master's thesis, apparently converted from a PDF: one section per page, notes typed as text, page
+numbers in a text box in the header).
+
+| Requirement | Before | After |
+|---|---|---|
+| Chapters found | 0 (a To-do said why) | 6 |
+| US Letter, 1-inch margins | met (199 sections) | met (10 sections: the 189 page breaks inside chapters went) |
+| Body double-spaced | 663/663 | 663/663 |
+| Front matter numbered apart, title page counted and unnumbered | not applied ("no first chapter was found") | applied: title page's section lower-case roman from 1 with no number on its first page, 3 more in roman, the introduction arabic from 1, 5 continuing |
+| Chapters and major sections on a new page | met (the source breaks every page) | met: 9 of 9 titles at the top of a page in the PDF |
+| Header and footer at least ¾ in from the edge | header 0.49 in, footer 0 | 0.75 in in all 10 sections |
+| The visible page numbers | the file's own, in a text box fixed 0.80 in from the top | the same box, 0.80 in from the top (the distance does not move it; now listed for the author); LibreOffice clips its digits, so the numbers it shows cannot be read off the PDF |
+| Bibliography hanging indent 0.5 in | 0.39 in | 0.50 in on 961 of 962 paragraphs in the Bibliography style (one, a numbered list paragraph, keeps its list's indent) |
+| Title page states title, author, statement, degree, year | reported lacking the author, the statement, the degree and the year | all five found; no finding |
+| Required parts | 6 missing reported (copyright, approval, abstract, lists of tables and figures, the first chapter) | 5 (the same without the first chapter); they are missing from this file |
+| Contents list against the chapters | not run (no chapters) | run; no finding |
+| No word changed undeclared; valid files | met | met |
+
+The second dissertation, the same way: chapters found 3 (the abstract page among them, so the arabic
+numbers began at the abstract) → 5; page numbers 0.51 to 0.71 in from the bottom edge in the PDF → 0.76
+to 0.96 in on 296 of 297 pages, the lowest text still 1.01 in from the edge; front matter in roman
+numerals ii to x, where before the arabic numbers began on its fifth page; the hanging indent 0.39 →
+0.50 in; the title page finding (author "missing") gone; the order finding (the first chapter out of
+order) gone.
+
+### What remains
+
+- Nothing was opened in Microsoft Word. LibreOffice prints the file's own header text box with clipped
+  digits on the thesis, so whether every page shows its number there was not checked.
+- The pass needs a styled file: a manuscript typed with direct formatting only and no contents list
+  gets nothing from it (Brill shows 0 changes), and its chapter titles depend on the model as before.
+- The labelling prompt still says the manuscript has no paragraph styles and defines a title block by
+  its author lines; see the measured comparison above before changing it, and measure Brill again if
+  it changes.
+- A page number in a fixed text box is listed, not moved.
+- The second dissertation's gold and the pass were not independent (above); a third styled document
+  would be the clean test.
+
+### Spend
+
+By the scripts' catalog prices: the second dissertation's labelling $0.169, Brill holdout $0.134,
+Brill dev fresh $0.100, the comparison of passages and prompt about $0.14 (23 calls; the script was
+stopped before printing its own tally, so this is 23 calls at the thesis run's average of $0.006): about
+$0.54 in all, under the $3 cap. Calls the Gateway refused for its rate limit are not charged. The thesis was measured from round 9's cached answers.
