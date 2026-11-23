@@ -22,11 +22,15 @@ export const ROLE_LABELS = Object.freeze({
   'list-item': 'List item',
   table: 'Table',
   body: 'Body text',
-  'title-page': 'Book title page (title, editors or authors)',
+  'title-page': 'Title page of the book or dissertation',
   'front-matter-heading': 'Heading of a front or back matter section (Contents, Abbreviations…)',
   'contents-entry': 'Line of the contents list',
   'contributor-note': 'Note on a contributor',
   'part-title': 'Part title',
+  'copyright-page': 'Copyright page',
+  'approval-page': 'Approval or committee page',
+  dedication: 'Dedication',
+  'appendix-heading': 'Appendix heading',
 });
 export const MATTER_GROUP = 'Front or back matter';
 export const roleLabel = role => ROLE_LABELS[role] ?? 'Not labelled';

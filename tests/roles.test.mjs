@@ -15,15 +15,15 @@ const asked = passage => [...passage.matchAll(/^\[(\d+)\]/gm)].map(match => Numb
 const labelLines = passage => asked(passage.split('Label these:')[1].split('\n\n')[0]);
 const answerAll = (passage, role = 'body') => ({ content: JSON.stringify({ roles: Object.fromEntries(labelLines(passage).map(index => [index, role])) }) });
 
-test('nineteen roles, each with a one-line definition; structural roles leave out body and bibliography entries', () => {
+test('twenty-three roles, each with a one-line definition; structural roles leave out body and bibliography entries', () => {
   assert.deepEqual(ROLE_IDS, ['title-block', 'epigraph', 'abstract', 'keywords', 'heading-1', 'heading-2', 'bibliography-heading', 'bibliography-entry', 'block-quotation', 'verse', 'figure', 'list-item', 'table', 'body',
-    'title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title']);
+    'title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title', 'copyright-page', 'approval-page', 'dedication', 'appendix-heading']);
   for (const role of ROLES) {
     assert.ok(role.definition.length > 10 && !role.definition.includes('\n'), role.id);
   }
-  assert.equal(STRUCTURAL.size, 17);
+  assert.equal(STRUCTURAL.size, 21);
   // The front and back matter's roles are structural and belong to no chapter.
-  assert.deepEqual([...MATTER], ['title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title']);
+  assert.deepEqual([...MATTER], ['title-page', 'front-matter-heading', 'contents-entry', 'contributor-note', 'part-title', 'copyright-page', 'approval-page', 'dedication', 'appendix-heading']);
   assert.ok([...MATTER].every(role => STRUCTURAL.has(role)));
   assert.equal(STRUCTURAL.has('body') || STRUCTURAL.has('bibliography-entry'), false);
   assert.equal(isRole('verse'), true);

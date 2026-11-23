@@ -108,10 +108,10 @@ test('every setting of every rule has a control and plain words', () => {
   for (const [slot, spec] of Object.entries(SLOTS)) {
     for (const [name, validator] of Object.entries(spec.params)) {
       const kind = fieldKind(validator);
-      assert.ok(['boolean', 'list', 'number', 'text'].includes(kind.type), `${slot}.${name}`);
+      assert.ok(['boolean', 'list', 'number', 'text', 'parts'].includes(kind.type), `${slot}.${name}`);
       assert.notEqual(settingLabel(slot, name), name, `${slot}.${name} has a label`);
       if (kind.type === 'list') for (const value of kind.values) assert.notEqual(valueLabel(slot, name, value), value, `${slot}.${name}=${value} has a label`);
-      if (kind.type === 'number' || kind.type === 'text') {
+      if (kind.type === 'number' || kind.type === 'text' || kind.type === 'parts') {
         const message = plainReason(`params.${name}: expected ${validator.allowed}`, slot);
         assert.ok(message.startsWith(`${settingLabel(slot, name)}: enter `), message);
         assert.doesNotMatch(message, JARGON);
