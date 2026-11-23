@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS_GROUP, extractRuleSheet } from '../lib/rules/extract.js';
+import { SENTENCES_GROUP, SETTINGS_GROUP, extractRuleSheet } from '../lib/rules/extract.js';
 import { splitGuidelines, splitInTwo } from '../lib/rules/chunk.js';
 import { GROUPS, MAX_RULES, slotsFor, validateSheet } from '../lib/rules/schema.js';
 
@@ -419,9 +419,8 @@ test('each part is asked once about the settings no reading filled, after the re
   assert.equal(settings.calls.length, 1, 'one question for the one part');
   const [question] = settings.calls;
   const expected = slotsFor('article').filter(slot => !['spelling.variety', 'notes.kind'].includes(slot));
-  assert.deepEqual(question, { model: 'glm-5.3', docType: 'article', slots: expected, text: G0, unreported: ['Please use double quotation marks for all quotations.'], signal },
-    'with the one sentence that reads as a requirement and that no reading quoted');
-  assert.deepEqual(asked, { settings: expected, parts: 1, added: ['figures.files'], sentences: 1, recovered: 0 });
+  assert.deepEqual(question, { model: 'glm-5.3', docType: 'article', slots: expected, text: G0, signal });
+  assert.deepEqual(asked, { settings: expected, parts: 1, added: ['figures.files'], sentenceParts: 0, sentences: 0, recovered: 0 }, 'one sentence left out of four is not enough to ask about');
   assert.deepEqual(failures, []);
   assert.deepEqual(sheet.rules.map(rule => rule.slot), ['spelling.variety', 'notes.kind', 'figures.files', null]);
   assert.deepEqual(seen.at(-1), { done: 4, total: 4 });
@@ -447,31 +446,61 @@ test('two parts that state a setting differently make a conflict; no question is
   const { callRules } = fake(() => reply([]));
   const parts = splitGuidelines(LONG);
   assert.equal(parts.length, 2);
-  const settings = fakeSettings((request, n) => reply(n === 1 ? [{ ...FOOTNOTES, quote: 'Sentence 1 states one more requirement' }] : [{ ...FOOTNOTES, params: { kind: 'endnotes' }, quote: 'Sentence 1150 states one more requirement' }]));
+  const settings = fakeSettings(request => (request.unreported ? reply([]) : reply(request.text.includes('Sentence 1 states') ? [{ ...FOOTNOTES, quote: 'Sentence 1 states one more requirement' }] : [{ ...FOOTNOTES, params: { kind: 'endnotes' }, quote: 'Sentence 1150 states one more requirement' }])));
   const { sheet } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [LONG], callRules, callSettings: settings.callSettings });
-  assert.equal(settings.calls.length, 2);
+  assert.equal(settings.calls.filter(call => !call.unreported).length, 2, 'one settings question per part');
   assert.deepEqual(sheet.rules.map(rule => [rule.params.kind, rule.conflict]), [['footnotes', true], ['endnotes', true]]);
   const none = fakeSettings();
   const all = slotsFor('article');
   const quoting = fake(request => reply(request.group === 'style' ? [...RULES.style, QUOTES] : RULES[request.group]));
   const result = await run(quoting.callRules, { callSettings: none.callSettings, known: all });
   assert.equal(none.calls.length, 0, 'every setting known and every sentence quoted');
-  assert.deepEqual(result.asked, { settings: [], parts: 0, added: [], sentences: 0, recovered: 0 });
+  assert.deepEqual(result.asked, { settings: [], parts: 0, added: [], sentenceParts: 0, sentences: 0, recovered: 0 });
 });
 
-test('the sentences no reading quoted are asked about with the settings, and a rule counts only when it quotes one of them', async () => {
-  const settings = fakeSettings(() => reply([
-    QUOTES,
-    { ...PLAIN, statement: 'Again a Word file.' },
-    { ...QUOTES, quote: 'double quotation marks for all quotations, always' },
-  ]));
-  const { sheet, asked } = await run(fake().callRules, { callSettings: settings.callSettings, known: slotsFor('article') });
-  assert.equal(settings.calls.length, 1, 'asked although no setting is missing');
-  assert.deepEqual(settings.calls[0].slots, []);
-  assert.deepEqual(settings.calls[0].unreported, ['Please use double quotation marks for all quotations.']);
-  assert.deepEqual(asked, { settings: [], parts: 1, added: [], sentences: 1, recovered: 1 });
-  assert.deepEqual(sheet.rules.map(rule => rule.statement).sort(), ['Submit a Word file.', 'Use US spelling.', 'Use double quotation marks.', 'Use footnotes.'],
-    'the rule from the listed sentence is added; a rule quoting another sentence or an unverified one is not');
+const verdicts = (rules, sentences) => ({ content: JSON.stringify({ rules, sentences }) });
+// Guidelines of which the readings below quote only the first requirement.
+const G2 = 'Authors must send the manuscript as one Word file. Please number every page in the footer. '
+  + 'Use double quotation marks for all quotations. Send the signed form with the final text. The press answers within a month.';
+const firstOnly = () => fake(request => reply(request.group === 'structure' ? [{ ...PLAIN, statement: 'Send one Word file.', quote: 'Authors must send the manuscript as one Word file' }] : []));
+const LEFT_OUT = ['Please number every page in the footer.', 'Use double quotation marks for all quotations.', 'Send the signed form with the final text.'];
+
+test('a part whose readings left out many of its requirement sentences is asked about them in a question of its own', async () => {
+  const settings = fakeSettings(request => (request.unreported ? verdicts([{ ...PLAIN, statement: 'Again a Word file.' }], [
+    { n: 1, asks: true, category: 'layout', statement: 'Number every page.', mode: 'fix' },
+    { n: 1, asks: true, category: 'layout', statement: 'A second verdict on the same sentence.', mode: 'flag' },
+    { n: 2, asks: false },
+    { n: 3, asks: true, category: 'files', statement: 'Send the signed form.', mode: 'supply' },
+    { n: 9, asks: true, category: 'files', statement: 'No such sentence.', mode: 'flag' },
+    { n: 'x', asks: true, statement: 'Not a number.' },
+  ]) : reply([])));
+  const { sheet, asked, failures } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G2], callRules: firstOnly().callRules, callSettings: settings.callSettings });
+  assert.deepEqual(failures, []);
+  assert.equal(settings.calls.length, 2, 'the settings question and the sentences question');
+  const question = settings.calls.find(call => call.unreported);
+  assert.deepEqual([question.slots, question.unreported], [[], LEFT_OUT]);
+  assert.ok(settings.calls.some(call => !call.unreported && call.slots.length > 0));
+  assert.deepEqual(asked.sentenceParts, 1);
+  assert.deepEqual([asked.sentences, asked.recovered], [3, 2]);
+  const page = sheet.rules.find(rule => rule.statement === 'Number every page.');
+  assert.equal(page.source.quote, 'Please number every page in the footer.', 'the quotation is the sentence itself');
+  assert.deepEqual([page.category, page.slot, page.mode], ['layout', null, 'flag'], 'no setting and no fix from a verdict');
+  assert.equal(sheet.rules.find(rule => rule.statement === 'Send the signed form.').mode, 'supply');
+  assert.equal(sheet.rules.length, 3, 'a rule in "rules", a second verdict and a verdict on no listed sentence add nothing');
+});
+
+test('a failed sentences question is a failure of its own group, and a second try asks the same sentences again', async () => {
+  const failing = fakeSettings(request => { if (request.unreported) throw coded('upstream_timeout', false); return reply([]); });
+  const first = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G2], callRules: firstOnly().callRules, callSettings: failing.callSettings });
+  const failure = first.failures.find(entry => entry.group === SENTENCES_GROUP);
+  assert.deepEqual(failure, { group: SENTENCES_GROUP, doc: 0, part: 0, sentences: LEFT_OUT, code: 'upstream_timeout', message: 'upstream_timeout' });
+  const again = fake();
+  const second = fakeSettings(() => verdicts([], [{ n: 2, asks: true, category: 'quotations', statement: 'Use double quotation marks.', mode: 'flag' }]));
+  const { sheet, failures } = await extractRuleSheet({ docType: 'article', model: 'glm-5.3', guidelines: [G2], callRules: again.callRules, callSettings: second.callSettings, only: [failure] });
+  assert.equal(again.calls.length, 0, 'no part is read again');
+  assert.deepEqual(second.calls.map(call => call.unreported), [LEFT_OUT]);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(sheet.rules.map(rule => rule.statement), ['Use double quotation marks.']);
 });
 
 test('a second try of a failed settings question asks about no sentence, since it reads no part', async () => {

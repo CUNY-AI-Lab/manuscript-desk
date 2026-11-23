@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { MAX_TEXT_FILE_BYTES, checkExpected, createCallRules, htmlToText, passes, readCaseFile, rulesPayload, scoreSheet, slotFills } from '../scripts/generality.mjs';
+import { MAX_TEXT_FILE_BYTES, checkExpected, createCallRules, createRecorder, htmlToText, passes, readCaseFile, rulesPayload, scoreSheet, slotFills } from '../scripts/generality.mjs';
 import { createHandler } from '../server/worker.js';
 import { ORIGIN, env, signed } from './helpers.mjs';
 
@@ -204,4 +204,38 @@ test('slotFills counts the runs that filled each setting, with values, and hides
     { slot: 'keywords.count', filled: 1, runs: 4, values: ['max=10 min=6 x1'] },
   ]);
   assert.ok(!JSON.stringify(rows).includes('private'), 'no text value is shown');
+});
+
+test('a recording replays its answers by request; with a new recording too, an unrecorded request is asked and both are kept', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'recorder-'));
+  try {
+    const first = path.join(dir, 'first');
+    const second = path.join(dir, 'second');
+    const sent = [];
+    const fetchImpl = async (url, init) => {
+      sent.push(JSON.parse(init.body).messages[1].content);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"rules":[]}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2 } }), { status: 200 });
+    };
+    const ask = async (recorder, texts) => {
+      const usage = { prompt: 0, completion: 0, calls: 0, unmetered: 0 };
+      const call = createCallRules({ key: 'k', rows: new Map(), usage, fetchImpl, record: recorder });
+      await recorder.start('case-run1');
+      for (const text of texts) await call({ model: 'm', docType: 'article', group: 'style', text });
+      return usage;
+    };
+    await ask(createRecorder({ record: first }), ['one']);
+    assert.deepEqual(sent, ['one']);
+    const replayed = await ask(createRecorder({ replay: first }), ['one']);
+    assert.deepEqual(sent, ['one'], 'a replay calls nothing');
+    assert.equal(replayed.calls, 1);
+    await assert.rejects(ask(createRecorder({ replay: first }), ['two']), /not_recorded/);
+    const both = await ask(createRecorder({ replay: first, record: second }), ['one', 'two']);
+    assert.deepEqual(sent, ['one', 'two'], 'only the request not recorded is asked');
+    assert.deepEqual([both.calls, both.replayed, both.prompt], [2, 1, 10]);
+    const again = await ask(createRecorder({ replay: second }), ['one', 'two']);
+    assert.equal(again.calls, 2, 'the new recording holds both answers');
+    assert.deepEqual(sent, ['one', 'two']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

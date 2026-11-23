@@ -77,10 +77,10 @@ test('POST /api/settings sends the sentences no reading quoted before the text, 
   assert.deepEqual(sent[0].messages, settingsPayload({ model: 'glm-5.3', docType: 'article', slots: ['abstract.words'], text: GUIDELINES, unreported }).messages);
   assert.match(sent[0].messages[1].content, /^Sentences from which the first reading reported no requirement:\n\[1\] Authors should send a signed form with the manuscript\.\n\[2\] Please number every page\.\n\nThe guidelines:\n/);
   assert.match(sent[0].messages[0].content, /Settings:/);
-  assert.match(sent[1].messages[0].content, /report it as a rule whose quote is copied from that sentence/);
+  assert.match(sent[1].messages[0].content, /give a verdict on every one of them, in "sentences"/);
   assert.doesNotMatch(sent[1].messages[0].content, /Settings:/);
   // Without sentences the prompt is the settings question alone, as before.
-  assert.doesNotMatch(settingsPrompt({ docType: 'article', slots: ['abstract.words'] }), /listed sentence/);
+  assert.doesNotMatch(settingsPrompt({ docType: 'article', slots: ['abstract.words'] }), /verdict/);
 });
 
 test('POST /api/settings refuses sentences that are not a short list of short texts', async () => {
