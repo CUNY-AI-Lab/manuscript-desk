@@ -136,8 +136,8 @@ test('retries a rejection with retry true once; does not retry when retry is fal
   const { sheet, failures } = await run(callRules);
   assert.deepEqual(calls.map(call => call.group).sort(), ['references', 'structure', 'style', 'style']);
   assert.deepEqual(failures, [
-    { group: 'references', doc: 0, part: 0, code: 'quota_exceeded' },
-    { group: 'structure', doc: 0, part: 0, code: 'network_error' },
+    { group: 'references', doc: 0, part: 0, code: 'quota_exceeded', message: 'quota_exceeded' },
+    { group: 'structure', doc: 0, part: 0, code: 'network_error', message: 'Failed to fetch' },
   ]);
   assert.deepEqual(categories(sheet), ['spelling']);
 
@@ -147,13 +147,29 @@ test('retries a rejection with retry true once; does not retry when retry is fal
   assert.deepEqual(second.failures.map(failure => failure.code), ['upstream_busy', 'upstream_busy', 'upstream_busy']);
 });
 
+test('a failure keeps the message the rejection carried, cut to 300 characters', async () => {
+  const { callRules } = fake((request, attempt) => {
+    if (request.group === 'style') throw { code: 'quota_exceeded', retry: false, message: 'Your allowance is used up.' };
+    if (request.group === 'references') throw { code: 'upstream_busy', retry: true, message: attempt === 1 ? 'Busy, first try.' : 'y'.repeat(400) };
+    throw { code: 'service_unavailable', retry: false, message: 42 };
+  });
+  const { failures } = await run(callRules);
+  assert.deepEqual(failures, [
+    { group: 'style', doc: 0, part: 0, code: 'quota_exceeded', message: 'Your allowance is used up.' },
+    { group: 'references', doc: 0, part: 0, code: 'upstream_busy', message: 'y'.repeat(300) },
+    { group: 'structure', doc: 0, part: 0, code: 'service_unavailable' },
+  ], 'the last attempt\'s message; none when it is not a string');
+  const empty = fake(() => { throw { code: 'service_unavailable', message: '' }; });
+  assert.ok((await run(empty.callRules)).failures.every(failure => !Object.hasOwn(failure, 'message')), 'an empty message is left out');
+});
+
 test('a failed group does not remove the other groups rules', async () => {
   const { callRules } = fake(request => {
     if (request.group === 'references') throw coded('model_output_limit', false);
     return reply(RULES[request.group]);
   });
   const { sheet, failures } = await run(callRules);
-  assert.deepEqual(failures, [{ group: 'references', doc: 0, part: 0, code: 'model_output_limit' }]);
+  assert.deepEqual(failures, [{ group: 'references', doc: 0, part: 0, code: 'model_output_limit', message: 'model_output_limit' }]);
   assert.deepEqual(categories(sheet), ['spelling', 'files']);
   assert.equal(validateSheet(sheet).ok, true);
 });
