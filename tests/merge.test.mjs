@@ -44,13 +44,80 @@ test('drops and counts a rule whose quote is not in the guidelines', () => {
   assert.deepEqual(ids(rules), ['quotations-1']);
 });
 
-test('drops and counts a rule that fails validation', () => {
-  const badParams = { ...spelling(), params: { variety: 'martian' } };
+test('drops and counts a rule that fails validation for a reason other than its slot, params or mode', () => {
   const badCategory = { ...footnotes(), category: 'gossip' };
-  const fixWithoutSlot = { ...wordFile(), mode: 'fix' };
-  const { rules, dropped } = mergeExtracted([badParams, badCategory, fixWithoutSlot, doubleQuotes()], [G0]);
+  const noStatement = { ...wordFile(), statement: '' };
+  const longStatement = { ...wordFile(), mode: 'fix', statement: 'x'.repeat(501) };
+  const { rules, dropped } = mergeExtracted([badCategory, noStatement, longStatement, doubleQuotes()], [G0]);
   assert.equal(dropped, 3);
   assert.deepEqual(ids(rules), ['quotations-1']);
+});
+
+// The one rule a single candidate becomes, with nothing dropped.
+function keptAlone(candidate, guidelines = [G0]) {
+  const { rules, dropped } = mergeExtracted([candidate], guidelines);
+  assert.equal(dropped, 0, 'kept, not left out');
+  assert.equal(rules.length, 1);
+  assert.equal(validateRule(rules[0]).ok, true);
+  return rules[0];
+}
+const commentOnly = rule => [rule.category, rule.slot, rule.mode, rule.params, rule.statement, rule.source.quote];
+
+test('keeps a verified fix rule with no slot as a comment', () => {
+  const nullSlot = { ...wordFile(), mode: 'fix', slot: null };
+  assert.deepEqual(commentOnly(keptAlone(nullSlot)), ['files', null, 'flag', {}, 'Submit a Word file.', 'Submit the manuscript as a Word file']);
+  const noSlotKey = { ...wordFile(), mode: 'fix' };
+  assert.deepEqual(commentOnly(keptAlone(noSlotKey)), ['files', null, 'flag', {}, 'Submit a Word file.', 'Submit the manuscript as a Word file']);
+});
+
+test('keeps a verified rule whose slot params are wrong or missing as a comment', () => {
+  const wrong = { ...spelling(), params: { variety: 'martian' } };
+  assert.deepEqual(commentOnly(keptAlone(wrong)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const missing = { ...spelling(), params: {} };
+  assert.deepEqual(commentOnly(keptAlone(missing)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const absent = { ...spelling() };
+  delete absent.params;
+  assert.deepEqual(commentOnly(keptAlone(absent)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const extra = { ...spelling(), params: { variety: 'us', strict: true } };
+  assert.deepEqual(commentOnly(keptAlone(extra)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+});
+
+test('keeps a verified rule whose slot is unknown or belongs to another category as a comment', () => {
+  const unknown = { ...spelling(), slot: 'spelling.colour' };
+  assert.deepEqual(commentOnly(keptAlone(unknown)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const elsewhere = { ...spelling(), category: 'punctuation' };
+  assert.deepEqual(commentOnly(keptAlone(elsewhere)), ['punctuation', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const notText = { ...spelling(), slot: 42 };
+  assert.deepEqual(commentOnly(keptAlone(notText)), ['spelling', null, 'flag', {}, 'Use US spelling.', 'Use American spelling throughout']);
+  const fixInOther = { ...captions(), mode: 'fix', slot: 'spelling.variety', params: { variety: 'us' } };
+  assert.deepEqual(commentOnly(keptAlone(fixInOther, [G1])), ['other', null, 'flag', {}, 'Give every figure a caption and a credit line.', 'Every figure needs a caption and a credit line']);
+});
+
+test('keeps flag and supply when retrying as a comment, and turns an unknown mode into flag', () => {
+  const supply = { ...captions(), slot: 'spelling.variety', params: { variety: 'us' } };
+  assert.equal(keptAlone(supply, [G1]).mode, 'supply');
+  const flagWithParams = { ...wordFile(), params: { colour: 'red' } };
+  assert.deepEqual(commentOnly(keptAlone(flagWithParams)), ['files', null, 'flag', {}, 'Submit a Word file.', 'Submit the manuscript as a Word file']);
+  for (const mode of ['auto', undefined, null, 7]) {
+    const odd = { ...wordFile(), mode };
+    assert.equal(keptAlone(odd).mode, 'flag', String(mode));
+  }
+});
+
+test('still drops a comment-only retry whose quotation is invented or whose category is unknown', () => {
+  const invented = { ...wordFile(), mode: 'fix', quote: 'Authors must submit a LaTeX source file' };
+  const badSlotInvented = { ...spelling(), params: { variety: 'martian' }, quote: 'Authors must use British spelling everywhere' };
+  const unknownCategory = { ...wordFile(), mode: 'fix', category: 'gossip' };
+  const unknownCategorySlot = { ...spelling(), category: 'gossip' };
+  const shortQuote = { ...wordFile(), mode: 'fix', quote: 'Word file' };
+  const { rules, dropped } = mergeExtracted([invented, badSlotInvented, unknownCategory, unknownCategorySlot, shortQuote], [G0]);
+  assert.equal(dropped, 5);
+  assert.deepEqual(rules, []);
+});
+
+test('leaves a valid slotted fix rule untouched', () => {
+  const rule = keptAlone(spelling());
+  assert.deepEqual([rule.category, rule.slot, rule.mode, rule.params], ['spelling', 'spelling.variety', 'fix', { variety: 'us' }]);
 });
 
 test('drops and counts a candidate that is not a plain object or whose quote is not text', () => {
