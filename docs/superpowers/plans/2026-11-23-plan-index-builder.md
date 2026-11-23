@@ -133,3 +133,11 @@ Measurement:
   sample without the mark).
 - **Saved ranges keep a number, not a heading.** Where an excluded range's first page is cut is
   saved as a character position, so no heading text from the PDF is kept in the browser.
+- **Thinking off for proposing terms.** The plan followed the reading check (thinking on, 20,000
+  tokens); measured on the dev book, that ran out of room without answering, so the route sends
+  thinking off. The judge and page-ranges routes keep thinking on.
+- **Inverted titles.** A proposed title filed under its first word after an article also searches
+  the title as written, found when the real page run left 27 such entries unmatched.
+- **Not built:** choosing which flagged entries the judge reads (it reads all of them, which on a
+  whole proposed list is hundreds of calls); a filter of proposals by how often they occur.
+

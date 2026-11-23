@@ -102,3 +102,10 @@ test('proposeTerms asks each passage once and gathers the verified proposals', a
   assert.deepEqual(failures, []);
   assert.deepEqual([...byPassage.values()].flatMap(answer => answer.proposals).map(item => item.heading), ['Other, Ben']);
 });
+
+test('a title proposed under its first word after the article is also searched as the text writes it', () => {
+  const [entry] = mergeProposals([proposal('Long Night, The', 'work')]);
+  assert.equal(entry.text, 'Long Night, The (The Long Night)');
+  const { entries } = countAndDrop([entry], [para(0, 'She wrote The Long Night in a year.')]);
+  assert.equal(entries[0].count, 1);
+});
