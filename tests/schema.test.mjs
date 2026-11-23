@@ -73,7 +73,7 @@ test('every category has a label, a known group and known document types', () =>
 
 test('every slot names an existing category', () => {
   const known = new Set(ids(CATEGORIES));
-  assert.equal(Object.keys(SLOTS).length, 45);
+  assert.equal(Object.keys(SLOTS).length, 47);
   for (const [slot, { category, params }] of Object.entries(SLOTS)) {
     assert.ok(known.has(category), `${slot} -> ${category}`);
     for (const validator of Object.values(params)) assert.equal(typeof validator, 'function', slot);
@@ -297,6 +297,10 @@ test('the dissertation settings take their values and refuse others', () => {
   assert.equal(rule('chapters.new-page', 'chapters', { required: true }).ok, true);
   assert.equal(rule('captions.position', 'figures-tables', { tables: 'above', figures: 'below' }).ok, true);
   assert.equal(rule('captions.position', 'figures-tables', { tables: null, figures: null }).ok, false);
+  assert.equal(rule('layout.page-number-distance', 'layout', { inches: 0.75 }).ok, true);
+  assert.equal(rule('layout.page-number-distance', 'layout', { inches: 0.1 }).ok, false, 'too close to the edge to be a requirement');
+  assert.equal(rule('references.hanging-indent', 'references', { inches: 0.5 }).ok, true);
+  assert.equal(rule('references.hanging-indent', 'references', { inches: '0.5' }).ok, false);
 });
 
 test('a rule of a built-in set keeps the page it quotes and the day it was read', () => {

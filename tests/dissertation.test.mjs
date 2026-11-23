@@ -57,6 +57,31 @@ test('the paper, the margins and the line spacing the sheet sets are applied, by
   assert.ok(declared(result, DECLARED.paper) > 0 && declared(result, DECLARED.margins) > 0 && declared(result, DECLARED.elementSpacing) === 1);
 });
 
+test('the page numbers stand at least as far from the edge as the sheet asks, and the bibliography takes its hanging indent', () => {
+  const { result } = run();
+  const look = readAppearance(result.bytes);
+  assert.ok(look.sections.length > 1);
+  for (const section of look.sections) assert.ok(section.margins.header >= 1080 && section.margins.footer >= 1080, 'at least three quarters of an inch');
+  // With 1-inch margins, a quarter of an inch is left between the number and the text.
+  for (const section of look.sections) assert.ok(section.margins.bottom - section.margins.footer >= 360);
+  assert.ok(declared(result, DECLARED.pageNumberDistance) > 0);
+  assert.equal(result.report.needsAuthor['sections whose page numbers stand so close to the text that Word moves the text to make room (a top or bottom margin less than a quarter of an inch beyond the header or footer)'], undefined);
+  const entries = look.paragraphs.filter(entry => entry.styleName === 'Bibliography');
+  assert.ok(entries.length === 2 && entries.every(entry => entry.left === 720 && entry.firstLine === -720), 'half an inch');
+  assert.equal(declared(result, DECLARED.hangingIndent), 1);
+  // Without the settings, the source's footer distance and the style's own indent stay.
+  const plain = run({ ...preset(), rules: preset().rules.filter(rule => !['layout.page-number-distance', 'references.hanging-indent'].includes(rule.slot)) }).result;
+  const before = readAppearance(plain.bytes);
+  assert.ok(before.sections.some(section => section.margins.footer < 1080));
+  assert.ok(before.paragraphs.filter(entry => entry.styleName === 'Bibliography').every(entry => entry.firstLine === -567));
+});
+
+test('a page-number distance that crowds the text is listed for the author', () => {
+  const sheet = withRule(preset(), { category: 'layout', slot: 'layout.page-number-distance', params: { inches: 1 } });
+  const { result } = run({ ...sheet, rules: sheet.rules.filter(rule => !(rule.slot === 'layout.page-number-distance' && rule.params.inches === 0.75)) });
+  assert.ok(Object.keys(result.report.needsAuthor).some(kind => kind.startsWith('sections whose page numbers stand so close')));
+});
+
 test('the margins can differ by side, and the sides the sheet leaves unset follow most of the text', () => {
   const sheet = withRule({ ...preset(), rules: preset().rules.filter(rule => rule.slot !== 'layout.margins') }, { category: 'layout', slot: 'layout.margin-sides', params: { top: null, right: null, bottom: null, left: 1.5 } });
   const { result } = run(sheet);
