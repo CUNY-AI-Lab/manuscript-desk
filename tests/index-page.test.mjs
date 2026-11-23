@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { addEntries, defaultJudgeScope, editEntry, entriesFromText, indexEntries, judgeScopes, mergeEntries, restoredFilter, restoredState, savedState, setStatus, settingsFromSheet, termListFile, termsPlan, workingList, DEFAULT_SETTINGS } from '../web/index/state.js';
-import { shownEntries, viewEntries } from '../web/index/terms-view.js';
+import { addEntries, defaultJudgeScope, editEntry, entriesFromText, indexEntries, invertedSubjects, judgeScopes, looksLikeInvertedName, mergeEntries, moveEntry, namesFromText, previewNames, restoredFilter, restoredState, savedState, setStatus, settingsFromSheet, subjectsFromText, termListFile, termsPlan, workingList, DEFAULT_SETTINGS } from '../web/index/state.js';
+import { groupView, newView, shownEntries, viewEntries } from '../web/index/terms-view.js';
 import { createStore } from '../web/shared/store.js';
 import { findHits } from '../lib/index/hits.js';
 import { newSheet } from '../lib/rules/schema.js';
@@ -116,12 +116,13 @@ test('the term editor ranks the proposals and hides those below the thresholds u
   assert.deepEqual(viewEntries(list, { below: true }, { concepts: 2, names: 1 }).shown.map(entry => entry.text).sort(), ['Example, Ada', 'kept', 'once', 'wide']);
   assert.deepEqual(viewEntries(list, { order: 'list' }, { concepts: 1, names: 1 }).shown.map(entry => entry.text), ['once', 'wide', 'Example, Ada', 'kept']);
   assert.deepEqual(DEFAULT_SETTINGS.filter, { concepts: 2, names: 1 });
-  assert.deepEqual(restoredFilter({ concepts: 9, names: 3 }), { concepts: 2, names: 3 });
+  assert.deepEqual(restoredFilter({ concepts: 9, names: 3 }), { concepts: 2, names: 3, people: 3 }, 'saved before people had their own threshold, they follow the names');
+  assert.deepEqual(restoredFilter({ concepts: 2, names: 1, people: 4 }), { concepts: 2, names: 1, people: 4 });
   assert.deepEqual(restoredFilter('nonsense'), { concepts: 2, names: 1 });
   // The facts and the thresholds are kept in this browser and come back.
   const saved = savedState({ entries: list, settings: { ...DEFAULT_SETTINGS, filter: { concepts: 3, names: 1 } }, proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} });
   const back = restoredState(structuredClone(saved));
-  assert.deepEqual(back.settings.filter, { concepts: 3, names: 1 });
+  assert.deepEqual(back.settings.filter, { concepts: 3, names: 1, people: 1 });
   assert.deepEqual(back.entries.find(entry => entry.text === 'wide').spread, 4);
 });
 
@@ -136,4 +137,98 @@ test('the judge reads the entries the author marked, those the tool flags, or bo
   assert.deepEqual(scopes.both.map(entry => entry.text), ['river', 'lake']);
   assert.equal(defaultJudgeScope(scopes), 'marked');
   assert.equal(defaultJudgeScope({ marked: [], flagged: [lake], both: [lake] }), 'flagged');
+});
+
+const empty = { proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} };
+
+test('the Names box puts each person surname first, keeps what is typed surname first, and the preview says so', () => {
+  const typed = 'Mary Shelley\n  early life\n  see also Godwin, William\nShelley, Percy Bysshe [ambiguous]\nSimone de Beauvoir (Beauvoir)\nPlato\nExample Brothers\n';
+  const { entries } = namesFromText(typed);
+  assert.deepEqual(entries.map(entry => [entry.section, entry.text, entry.status, entry.ambiguous]), [
+    ['names', 'Shelley, Mary', 'accepted', false],
+    ['names', 'Shelley, Percy Bysshe', 'accepted', true],
+    ['names', 'Beauvoir, Simone de (Beauvoir)', 'accepted', false],
+    ['names', 'Plato', 'accepted', false],
+    ['names', 'Example Brothers', 'accepted', false],
+  ]);
+  assert.deepEqual(entries[0].subentries, [{ text: 'early life' }]);
+  assert.deepEqual(entries[0].seeAlso, ['Godwin, William']);
+  assert.deepEqual(previewNames(typed).map(row => [row.typed, row.heading, row.how, row.searched]), [
+    ['Mary Shelley', 'Shelley, Mary', 'inverted', 'Mary Shelley'],
+    ['Shelley, Percy Bysshe', 'Shelley, Percy Bysshe', 'as-typed', 'Percy Bysshe Shelley'],
+    ['Simone de Beauvoir', 'Beauvoir, Simone de', 'inverted', 'Simone de Beauvoir'],
+    ['Plato', 'Plato', 'single', 'Plato'],
+    ['Example Brothers', 'Example Brothers', 'organization', 'Example Brothers'],
+  ]);
+  // A whole term list pasted into the box is read as one, its subjects staying subjects.
+  assert.deepEqual(namesFromText('Terms:\nriver\nNames:\nShelley, Mary\n').entries.map(entry => [entry.section, entry.text]), [['terms', 'river'], ['names', 'Shelley, Mary']]);
+  assert.deepEqual(previewNames('Terms:\nriver'), []);
+  // The download keeps book-index's syntax.
+  assert.equal(termListFile(entries).text.split('\n').slice(0, 4).join('\n'), 'Names:\nShelley, Mary\n  early life\n  see also Godwin, William');
+});
+
+test('the Subjects box reads the term list syntax, so lines are subjects unless a Names: line says otherwise', () => {
+  const { entries } = subjectsFromText('artificial intelligence (AI, machine learning)\nLisbon\nThe Long Night\n');
+  assert.deepEqual(entries.map(entry => [entry.section, entry.text]), [['terms', 'artificial intelligence (AI, machine learning)'], ['terms', 'Lisbon'], ['terms', 'The Long Night']]);
+});
+
+test('an entry moves between the groups with its facts; into Names it is put surname first, out of Names it keeps finding the same words', () => {
+  const made = (text, section, extra = {}) => ({ id: text, text, section, kind: section === 'names' ? 'person' : 'concept', status: 'proposed', subentries: [], see: [], seeAlso: [], ambiguous: false, count: 3, spread: 1, passages: 1, ...extra });
+  const list = [made('Mary Shelley (Shelley)', 'terms'), made('Example, Ada', 'names'), made('Hamlet', 'names'), made('river', 'terms')];
+  const moved = moveEntry(list, 'Mary Shelley (Shelley)', 'names');
+  assert.deepEqual([moved[0].section, moved[0].text, moved[0].moved, moved[0].count, moved[0].status, moved[0].kind], ['names', 'Shelley, Mary (Shelley)', true, 3, 'proposed', 'concept']);
+  const out = moveEntry(list, 'Example, Ada', 'terms');
+  assert.equal(out[1].text, 'Example, Ada (Ada Example)', 'a surname-first heading keeps the order the text uses as a form');
+  assert.equal(moveEntry(list, 'Hamlet', 'terms')[2].text, 'Hamlet');
+  assert.equal(moveEntry(list, 'river', 'sideways'), list);
+  assert.equal(moveEntry(list, 'river', 'terms')[3], list[3], 'already there: unchanged');
+  // A moved proposal stays shown whatever the threshold, in its new group, and its move is kept.
+  assert.equal(viewEntries(moved, { group: 'names' }, { concepts: 6, names: 6, people: 6 }).shown.some(entry => entry.id === 'Mary Shelley (Shelley)'), true);
+  const back = restoredState(structuredClone(savedState({ entries: moved, settings: DEFAULT_SETTINGS, ...empty })));
+  assert.equal(back.entries.find(entry => entry.text === 'Shelley, Mary (Shelley)').moved, true);
+});
+
+test('the two groups are shown apart, each with its own threshold: people, then concepts and the other names', () => {
+  const made = (text, section, kind, spread = 1) => ({ id: text, text, section, kind, status: 'proposed', subentries: [], see: [], seeAlso: [], count: 1, spread, passages: 1 });
+  const list = [made('Example, Ada', 'names', 'person'), made('Other, Ben', 'names', 'person', 3), made('once', 'terms', 'concept'), made('wide', 'terms', 'concept', 4), made('Lisbon', 'terms', 'place')];
+  const view = newView();
+  const filter = { concepts: 2, names: 1, people: 2 };
+  assert.deepEqual(viewEntries(list, groupView(view, 'names'), filter).shown.map(entry => entry.text), ['Other, Ben']);
+  assert.equal(viewEntries(list, groupView(view, 'names'), filter).below, 1);
+  assert.deepEqual(viewEntries(list, groupView(view, 'terms'), filter).shown.map(entry => entry.text), ['wide', 'Lisbon']);
+  view.groups.terms.kind = 'place';
+  assert.deepEqual(viewEntries(list, groupView(view, 'terms'), filter).shown.map(entry => entry.text), ['Lisbon']);
+  view.groups.names.below = true;
+  assert.equal(viewEntries(list, groupView(view, 'names'), filter).shown.length, 2);
+  // Without a people threshold, people follow the names', as before.
+  assert.equal(viewEntries(list, groupView(newView(), 'names'), { concepts: 2, names: 1 }).shown.length, 2);
+});
+
+test('subjects that read like a person surname first are offered to Names; titles and bodies are not', () => {
+  for (const heading of ['Shelley, Mary', 'Du Bois, W. E. B.', 'King, Martin Luther, Jr.', 'Beauvoir, Simone de']) assert.equal(looksLikeInvertedName(heading), true, heading);
+  for (const heading of ['Long Night, The', 'Example Press, The', 'artificial intelligence', 'reading, close', 'Silent Rivers', 'Ada']) assert.equal(looksLikeInvertedName(heading), false, heading);
+  const { entries } = entriesFromText('Shelley, Mary\nriver\nLong Night, The\nNames:\nExample, Ada\n');
+  assert.deepEqual(invertedSubjects(entries).map(entry => entry.text), ['Shelley, Mary']);
+  assert.deepEqual(invertedSubjects(moveEntry(entries, entries[0].id, 'names')), []);
+});
+
+test('saved work from before the groups comes back whole: an entry without a section is sorted by its kind', () => {
+  const saved = {
+    entries: [
+      { id: 'e1', section: 'terms', text: 'river', status: 'accepted' },
+      { id: 'e2', section: 'names', text: 'Example, Ada', status: 'accepted' },
+      { id: 'e3', text: 'Other, Ben', status: 'proposed', kind: 'person', count: 2 },
+      { id: 'e4', text: 'memory', status: 'proposed', kind: 'concept' },
+      { id: 'e5', section: 'sideways', text: 'Lisbon', status: 'accepted' },
+      { id: 'e6', text: 'harbour' },
+    ],
+    settings: { ...DEFAULT_SETTINGS, filter: { concepts: 3, names: 2 } },
+  };
+  const back = restoredState(saved);
+  assert.deepEqual(back.entries.map(entry => [entry.id, entry.section, entry.text, entry.status]), [
+    ['e1', 'terms', 'river', 'accepted'], ['e4', 'terms', 'memory', 'proposed'], ['e5', 'terms', 'Lisbon', 'accepted'], ['e6', 'terms', 'harbour', 'accepted'],
+    ['e2', 'names', 'Example, Ada', 'accepted'], ['e3', 'names', 'Other, Ben', 'proposed'],
+  ]);
+  assert.equal(back.entries.find(entry => entry.id === 'e3').count, 2);
+  assert.deepEqual(back.settings.filter, { concepts: 3, names: 2, people: 2 });
 });

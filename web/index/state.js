@@ -7,7 +7,8 @@ import { SHEET_VERSION, validateSheet } from '../../lib/rules/schema.js';
 import { headingOf, lineOf, newEntry, parseTermList, serializeTermList, variantsOf, SECTIONS } from '../../lib/index/termlist.js';
 import { LAYOUTS, SORTINGS } from '../../lib/index/format.js';
 import { RANGE_STYLES } from '../../lib/index/ranges.js';
-import { buildTermPassages } from '../../lib/index/terms.js';
+import { buildTermPassages, corporateName, indexFormOfName, nameParts } from '../../lib/index/terms.js';
+import { reverseName } from '../../lib/index/indexer.js';
 import { DEFAULT_FILTER, PAGE_CHOICES } from '../../lib/index/rank.js';
 
 export const SAVED_KEY = 'index';
@@ -25,6 +26,94 @@ export function entriesFromText(text, existing = []) {
   const { entries, problems } = parseTermList(text);
   return { entries: entries.map(entry => ({ ...entry, id: taken.has(entry.id) ? newEntry({ ...entry, id: undefined, taken }).id : entry.id, status: 'accepted' })), problems };
 }
+
+// --- The two boxes: Names and Subjects ---
+
+export const GROUPS = Object.freeze(['names', 'terms']);
+export const GROUP_LABELS = Object.freeze({ names: 'Names', terms: 'Subjects' });
+const SECTION_LINE = /^\s*(terms|names)\s*:\s*$/im;
+const AMBIGUOUS_MARK = /\s+\[ambiguous\]\s*$/i;
+const indentOf = line => /^[ \t]*/.exec(line)[0].replace(/\t/g, '    ').length;
+
+// The lines of a box that start an entry (not a subentry or a cross-reference indented under one).
+function entryLines(text) {
+  const lines = String(text ?? '').split(/\r\n?|\n/);
+  const content = lines.filter(line => line.trim());
+  const common = content.length ? Math.min(...content.map(indentOf)) : 0;
+  return lines.map(line => ({ line, entry: Boolean(line.trim()) && indentOf(line) <= common }));
+}
+
+/** A line of the Names box in index form: its heading through indexFormOfName, its other forms and mark kept. */
+function nameLine(line) {
+  const ambiguous = AMBIGUOUS_MARK.test(line);
+  const bare = line.replace(AMBIGUOUS_MARK, '').trim();
+  const converted = lineOf(indexFormOfName(headingOf(bare)).heading, variantsOf(bare));
+  return `${converted}${ambiguous ? ' [ambiguous]' : ''}`;
+}
+
+/**
+ * What the Names box will add, line by line, for the page to show beside what was typed.
+ * @returns {Array<{ typed: string, heading: string, how: string, searched: string }>} how: from
+ *   indexFormOfName; searched: the form the proofs are searched for
+ */
+export function previewNames(text) {
+  if (SECTION_LINE.test(String(text ?? ''))) return [];
+  return entryLines(text).filter(item => item.entry).map(({ line }) => {
+    const typed = headingOf(line.replace(AMBIGUOUS_MARK, ''));
+    const { heading, how } = indexFormOfName(typed);
+    return { typed, heading, how, searched: reverseName(heading)[0] };
+  }).filter(row => row.typed);
+}
+
+/**
+ * The entries the Names box adds: each line a person, typed as it is said and put surname first
+ * (indexFormOfName); lines indented under one are its subentries or cross-references. Text that
+ * holds its own "Terms:" or "Names:" lines is a whole term list and is read as one.
+ */
+export function namesFromText(text, existing = []) {
+  if (SECTION_LINE.test(String(text ?? ''))) return entriesFromText(text, existing);
+  const lines = entryLines(text).map(({ line, entry }) => (entry ? nameLine(line) : line));
+  return entriesFromText(`Names:\n${lines.join('\n')}`, existing);
+}
+
+/** The entries the Subjects box adds: the term list's own syntax, so a pasted list works as it is. */
+export const subjectsFromText = (text, existing = []) => entriesFromText(text, existing);
+
+/**
+ * Moves an entry to the other group. Into Names, a heading not yet surname first is put in index
+ * form; out of Names, a surname-first heading keeps the order the text uses as a form to search for,
+ * so the entry finds what it found before. The model's kind is kept; `moved` keeps it shown.
+ */
+export function moveEntry(list, id, section) {
+  if (!SECTIONS.includes(section)) return list;
+  return list.map(entry => {
+    if (entry.id !== id || entry.section === section) return entry;
+    const heading = headingOf(entry.text);
+    const variants = variantsOf(entry.text);
+    const text = section === 'names'
+      ? lineOf(indexFormOfName(heading).heading, variants)
+      : nameParts(heading) ? lineOf(heading, [...variants, reverseName(heading)[0]]) : entry.text;
+    return { ...entry, section, text, moved: true };
+  });
+}
+
+// A subject that reads as a person's name written surname first: one to three capitalized words, a
+// comma, one to four capitalized words or initials, and perhaps a suffix; not a title filed under its
+// article ("Long Night, The") and not a body ("Example Press, The").
+const CAPITALIZED = /^(?:\p{Lu}[\p{L}'’.-]*|(?:de|du|da|di|del|della|van|von|der|den|le|la)\b)$/u;
+const ARTICLE = /^(?:the|a|an|la|le|les|l'|il|lo|gli|i|el|los|las|der|die|das|o|os|as)$/iu;
+export function looksLikeInvertedName(heading) {
+  const parts = nameParts(heading);
+  if (!parts || corporateName(heading)) return false;
+  const surname = parts.surname.split(' ');
+  if (heading.split(',').length - (parts.suffix ? 1 : 0) !== 2) return false;
+  if (surname.length > 3 || parts.forenames.length > 4 || parts.forenames.length === 0) return false;
+  if (parts.forenames.length === 1 && ARTICLE.test(parts.forenames[0])) return false;
+  return [...surname, ...parts.forenames].every(token => CAPITALIZED.test(token)) && surname.some(token => /^\p{Lu}/u.test(token));
+}
+
+/** The subjects the page offers to move to Names: written as a person's name, surname first, not moved before. */
+export const invertedSubjects = list => list.filter(entry => entry.section === 'terms' && entry.status !== 'dropped' && entry.moved !== true && looksLikeInvertedName(headingOf(entry.text)));
 
 /** Adds entries to a list; one already there (same section, same line) is not added twice. */
 export function addEntries(list, added) {
@@ -179,12 +268,16 @@ export function settingsFromSheet(text) {
 
 // --- What this browser keeps ---
 
-const savedEntry = ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading }) => ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading });
+const savedEntry = ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading, moved }) => ({ id, section, text, ambiguous, subentries, see, seeAlso, status, kind, count, countLeftOut, passages, spread, discussed, inHeading, moved });
 // The numbers and marks a saved entry keeps beside its line, checked on the way back.
 const savedFacts = own => ({
   ...Object.fromEntries(['count', 'countLeftOut', 'passages', 'spread', 'discussed'].filter(key => Number.isInteger(own[key]) && own[key] >= 0).map(key => [key, own[key]])),
   ...(own.inHeading === true ? { inHeading: true } : {}),
+  ...(own.moved === true ? { moved: true } : {}),
 });
+// The group of a saved entry. Work saved before the groups, or damaged, may lack a section: a
+// person the model proposed is a name, anything else a subject, so nothing is lost on the way back.
+const savedSection = entry => (SECTIONS.includes(entry.section) ? entry.section : entry.kind === 'person' ? 'names' : 'terms');
 
 /**
  * The work kept in this browser: the term list (without the quotations from the manuscript), the
@@ -216,9 +309,12 @@ const HEX64 = /^[0-9a-f]{64}$/;
 /** The term editor's thresholds, checked: anything that does not fit is the default. */
 export function restoredFilter(filter) {
   if (!isObject(filter)) return { ...DEFAULT_FILTER };
+  const names = PAGE_CHOICES.includes(filter.names) ? filter.names : DEFAULT_FILTER.names;
   return {
     concepts: PAGE_CHOICES.includes(filter.concepts) ? filter.concepts : DEFAULT_FILTER.concepts,
-    names: PAGE_CHOICES.includes(filter.names) ? filter.names : DEFAULT_FILTER.names,
+    names,
+    // Saved before people had a threshold of their own: they followed the names'.
+    people: PAGE_CHOICES.includes(filter.people) ? filter.people : names,
   };
 }
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
@@ -227,10 +323,10 @@ const boolMap = value => (isObject(value) ? Object.fromEntries(Object.entries(va
 /** The saved work, checked: anything that does not fit is left out. */
 export function restoredState(saved) {
   if (!isObject(saved)) return {};
-  const text = typeof saved.entries === 'object' ? serializeTermList((saved.entries ?? []).filter(entry => isObject(entry) && typeof entry.text === 'string')) : '';
+  const kept = (Array.isArray(saved.entries) ? saved.entries : []).filter(entry => isObject(entry) && typeof entry.text === 'string').map(entry => ({ ...entry, section: savedSection(entry) }));
+  const text = serializeTermList(kept);
   const parsed = parseTermList(text).entries;
   // The file syntax checks the lines; the saved fields not in it are taken from the saved entry in the same order.
-  const kept = (Array.isArray(saved.entries) ? saved.entries : []).filter(entry => isObject(entry) && typeof entry.text === 'string');
   const entries = parsed.map(entry => {
     const own = kept.find(item => item.section === entry.section && item.text === entry.text) ?? {};
     return { ...entry, id: typeof own.id === 'string' && /^e\d+$/.test(own.id) ? own.id : entry.id, status: pick(own.status, STATUSES, 'accepted'), ...(typeof own.kind === 'string' ? { kind: own.kind } : {}), ...savedFacts(own) };

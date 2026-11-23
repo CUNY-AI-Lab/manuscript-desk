@@ -28,3 +28,11 @@ test('the measurement\'s curve and the filter in words', () => {
   assert.deepEqual(FILTER_CURVE[0], { concepts: 1, names: 1 });
   assert.ok(FILTER_CURVE.some(point => point.concepts === 3 && point.names === 3));
 });
+
+test('people may have their own threshold, else they follow the names; an entry the author moved always shows', () => {
+  const ada = entry('Example, Ada', { section: 'names', kind: 'person', spread: 2 });
+  assert.equal(passesFilter(ada, { concepts: 1, names: 3 }), false, 'no people threshold: the names\'');
+  assert.equal(passesFilter(ada, { concepts: 1, names: 3, people: 2 }), true);
+  assert.equal(passesFilter(entry('Lisbon', { kind: 'place', spread: 2 }), { concepts: 1, names: 3, people: 1 }), false, 'a place is not a person');
+  assert.equal(passesFilter(entry('once', { moved: true }), { concepts: 6, names: 6 }), true);
+});

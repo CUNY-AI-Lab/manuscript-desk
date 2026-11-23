@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { validateDocx } from '../../lib/docx/validate.js';
 import { readDocx } from '../../lib/docx/read.js';
+import { dropFiles, dropStray } from './drop-files.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const { chromium } = playwright.default ?? playwright;
@@ -108,8 +109,9 @@ try {
   log('page opened: signed in, model menu defaults to deepseek-v4.1-flash-1017, beta line shown');
 
   // ---- Stage 1: propose terms from the invented manuscript ----
-  await page.setInputFiles('#manuscript-file', join(FIXTURES, 'manuscript.docx'));
+  assert.equal(await dropFiles(page, '#manuscript-drop', [join(FIXTURES, 'manuscript.docx')]), true, 'the drop area is marked while the file is over it');
   await page.locator('#manuscript-status', { hasText: '1 model call' }).waitFor();
+  assert.equal(await page.locator('#manuscript-file').evaluate(input => input.files[0]?.name), 'manuscript.docx', 'the dropped file shows in the input as a chosen one does');
   assert.match(await page.locator('#manuscript-status').textContent(), /paragraphs? of bibliography left out.*by their headings/);
   await page.getByRole('button', { name: 'Propose terms' }).click();
   await page.locator('.term-row').first().waitFor();
@@ -117,9 +119,16 @@ try {
   assert.equal(calls.terms.length, 1);
   assert.equal(calls.terms[0].includes('Placeholder, Ada. Invented Things.'), false, 'the bibliography is not sent');
   const headingsShown = () => page.locator('.term-heading').evaluateAll(inputs => inputs.map(input => input.value));
-  // The default threshold hides concepts found on one page only; the name stays.
+  const groupHeadings = group => page.locator(`#group-${group} .term-heading`).evaluateAll(inputs => inputs.map(input => input.value));
+  // The default threshold hides concepts found on one page only; the name stays, in its own group.
   assert.deepEqual(await headingsShown(), ['Placeholder, Ada']);
-  assert.match(await page.locator('#threshold-status').textContent(), /^2 proposals are below this and not shown\. They stay in the list\./);
+  assert.deepEqual(await groupHeadings('names'), ['Placeholder, Ada']);
+  assert.equal(await page.locator('#group-title-names').textContent(), 'Names (1)');
+  assert.equal(await page.locator('#group-title-terms').textContent(), 'Subjects (2)');
+  assert.equal(await page.locator('#group-names .group-counts').textContent(), '1 name: 0 accepted, 1 to review, 0 dropped.');
+  assert.equal(await page.locator('#threshold-status-names').textContent(), 'Every proposal passes this.');
+  assert.equal(await page.locator('#threshold-people').inputValue(), '1');
+  assert.match(await page.locator('#threshold-status-terms').textContent(), /^2 proposals are below this and not shown\. They stay in the list\./);
   assert.equal(await page.locator('#threshold-concepts').inputValue(), '2');
   await page.getByRole('button', { name: 'Show the 2 proposals below the thresholds' }).click();
   assert.deepEqual((await headingsShown()).sort(), [MARKUP, 'Placeholder, Ada', 'lanterns'].sort());
@@ -127,16 +136,19 @@ try {
   assert.deepEqual(await headingsShown(), ['Placeholder, Ada']);
   await page.selectOption('#threshold-concepts', '1');
   assert.deepEqual((await headingsShown()).sort(), [MARKUP, 'Placeholder, Ada', 'lanterns'].sort());
-  assert.equal(await page.locator('#threshold-status').textContent(), 'Every proposal passes this.');
+  assert.deepEqual((await groupHeadings('terms')).sort(), [MARKUP, 'lanterns'].sort());
+  assert.equal(await page.locator('#threshold-status-terms').textContent(), 'Every proposal passes this.');
   assert.match(await page.locator('.term-row', { has: page.locator('input[value="lanterns"]') }).textContent(), /on about 1 page/);
   assert.equal(await page.evaluate(() => window.__xss), undefined, 'model text is never parsed as HTML');
   assert.match(await page.locator('.term-counts').textContent(), /3 entries: 0 accepted, 3 to review/);
   log('stage 1: one passage asked, bibliography not sent, an unverified quotation dropped, markup shown as text');
+  log('two groups: the person under Names, the concepts under Subjects, each with its counts and its own threshold');
   log('threshold: concepts on one page hidden by default and shown on request; the author lowers it to every proposal');
 
   // Drop the odd one, accept the rest, merge nothing, download the list.
   await page.locator('.term-row', { has: page.locator(`input[value="${MARKUP.replaceAll('"', '\\"')}"]`) }).getByRole('button', { name: 'Drop' }).click();
-  await page.getByRole('button', { name: /^Accept the 3 entries shown$/ }).click();
+  await page.getByRole('button', { name: /^Accept the 1 name shown$/ }).click();
+  await page.getByRole('button', { name: /^Accept the 2 subjects shown$/ }).click();
   assert.match(await page.locator('.term-counts').textContent(), /3 entries: 3 accepted/);
   await page.locator('.term-row', { has: page.locator('input[value="lanterns"]') }).getByRole('button', { name: 'Drop' }).click();
   await page.locator('.term-row', { has: page.locator(`input[value="${MARKUP.replaceAll('"', '\\"')}"]`) }).getByRole('button', { name: 'Drop' }).click();
@@ -148,15 +160,16 @@ try {
   // ---- Stage 2: a term list for the invented PDF, matched with no model ----
   const listFile = join(scratch, 'terms.txt');
   await writeFile(listFile, 'Terms:\nintelligence\n  reports (report)\nfinancial\nhelp [ambiguous]\nContents\nNames:\nBush, George W.\nObama, Barack\n');
-  await page.setInputFiles('#list-file', listFile);
+  await dropFiles(page, '#list-drop', [listFile]);
   await page.locator('.term-counts', { hasText: '9 entries' }).waitFor();
-  await page.setInputFiles('#pdf-file', join(FIXTURES, 'index-sample.pdf'));
+  assert.equal(await page.locator('#group-title-names').textContent(), 'Names (3)', 'the list\'s Names: line sorts its people into Names');
+  await dropFiles(page, '#pdf-drop', [join(FIXTURES, 'index-sample.pdf')]);
   await page.locator('#match-status', { hasText: 'found on' }).waitFor({ timeout: 60000 });
   const preview = async () => (await page.locator('#index-preview p').allTextContents()).join('\n');
   let index = await preview();
   for (const line of ['Bush, George W., 2', 'Contents, ii', 'financial, 3', 'help, 4', 'intelligence, 4', 'reports, 1', 'Obama, Barack, 3']) assert.ok(index.includes(line), `${line} in:\n${index}`);
   assert.match(await page.locator('#output-status').textContent(), /Placeholder, Ada/, 'a term not in the proofs is named');
-  log('stage 2 with no model: the PDF read in the worker, terms found with the PDF\'s page labels, a subentry by its own words');
+  log('stage 2 with no model: the list and the PDF dropped on their boxes, the PDF read in the worker, terms found with the PDF\'s page labels, a subentry by its own words');
 
   // ---- Pages the index does not cover ----
   await page.getByRole('button', { name: /Find these pages with a model \(1 call\)/ }).click();
@@ -223,6 +236,59 @@ try {
   await page.getByRole('button', { name: 'Delete saved work now' }).click();
   await until(async () => (await savedKeys(page)).length === 0, 'deleted');
   log('reload keeps the list and the settings, never text from the files; Delete saved work now empties the store');
+
+  // ---- The two boxes, moving between them, and drops that are refused ----
+  const fresh = await context.newPage();
+  fresh.on('pageerror', error => problems.push(`page error: ${error.message}`));
+  fresh.on('console', message => { if (message.type() === 'error') problems.push(`console: ${message.text()}`); });
+  await fresh.goto(pageUrl);
+  await fresh.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
+  await fresh.getByRole('textbox', { name: 'Names', exact: true }).fill('Mary Shelley\nSimone de Beauvoir\nShelley, Percy Bysshe\nPlato');
+  assert.deepEqual(await fresh.locator('#names-preview-list li').allTextContents(), [
+    'Mary Shelley →  becomes Shelley, Mary',
+    'Simone de Beauvoir →  becomes Beauvoir, Simone de',
+    'Shelley, Percy Bysshe →  becomes Shelley, Percy Bysshe (kept as you typed it)',
+    'Plato →  becomes Plato (a single name, kept as it is)',
+  ]);
+  await fresh.getByRole('button', { name: 'Add these names' }).click();
+  assert.equal(await fresh.getByRole('textbox', { name: 'Names', exact: true }).inputValue(), '', 'the box empties once its names are in the list');
+  assert.equal(await fresh.locator('#names-preview').isHidden(), true);
+  await fresh.getByRole('textbox', { name: 'Subjects', exact: true }).fill('artificial intelligence (AI)\nLisbon');
+  await fresh.getByRole('button', { name: 'Add these subjects' }).click();
+  const freshGroup = group => fresh.locator(`#group-${group} .term-heading`).evaluateAll(inputs => inputs.map(input => input.value));
+  assert.deepEqual(await freshGroup('names'), ['Beauvoir, Simone de', 'Plato', 'Shelley, Mary', 'Shelley, Percy Bysshe']);
+  assert.deepEqual(await freshGroup('terms'), ['artificial intelligence', 'Lisbon']);
+  assert.match(await fresh.locator('.term-row', { has: fresh.locator('input[value="Shelley, Mary"]') }).textContent(), /found in the text as “Mary Shelley”/);
+  // The model, or the author, put something in the wrong group: one button moves it.
+  await fresh.getByRole('button', { name: 'Move Plato to Subjects' }).click();
+  assert.deepEqual(await freshGroup('terms'), ['artificial intelligence', 'Lisbon', 'Plato']);
+  await fresh.getByRole('button', { name: 'Move Lisbon to Names' }).focus();
+  await fresh.keyboard.press('Enter');
+  assert.ok((await freshGroup('names')).includes('Lisbon'), 'the move works from the keyboard');
+  // A list without a Names: line is all subjects; the page offers to move what reads like a person.
+  await dropFiles(fresh, '#list-drop', [{ name: 'old-list.txt', mimeType: 'text/plain', buffer: Buffer.from('Wollstonecraft, Mary\nharbours\nLong Night, The\n') }]);
+  await fresh.locator('#inverted-notice').waitFor();
+  assert.match(await fresh.locator('#inverted-notice').textContent(), /^1 subject reads like a person's name written surname first, such as “Wollstonecraft, Mary”\./);
+  await fresh.getByRole('button', { name: 'Move it to Names' }).click();
+  assert.ok((await freshGroup('names')).includes('Wollstonecraft, Mary'));
+  assert.equal(await fresh.locator('#inverted-notice').count(), 0);
+  const [freshList] = await Promise.all([fresh.waitForEvent('download'), fresh.getByRole('button', { name: 'Download the term list' }).click()]);
+  assert.equal(await readFile(await freshList.path(), 'utf8'), 'Terms:\nPlato\nartificial intelligence (AI)\nharbours\nLong Night, The\nNames:\nShelley, Mary\nBeauvoir, Simone de\nShelley, Percy Bysshe\nLisbon\nWollstonecraft, Mary\n');
+  log('Names box: typed as said, shown surname first before adding; Subjects box; one button moves an entry either way; an old list\'s surname-first subjects offered to Names; the download keeps book-index\'s syntax');
+  // Drops that are refused say why; a drop outside the boxes is ignored with a hint.
+  await dropFiles(fresh, '#pdf-drop', [join(FIXTURES, 'manuscript.docx')]);
+  await fresh.locator('#error-banner', { hasText: 'manuscript.docx is not a PDF file (.pdf).' }).waitFor();
+  await dropFiles(fresh, '#pdf-drop', [join(FIXTURES, 'index-sample.pdf'), join(FIXTURES, 'index-sample.pdf')]);
+  await fresh.locator('#error-banner', { hasText: 'This takes one file at a time, and 2 were given. Drag a PDF file (.pdf) on its own.' }).waitFor();
+  await dropFiles(fresh, '#sheet-drop', [{ name: 'notes.docx', mimeType: '', buffer: Buffer.from('x') }]);
+  await fresh.locator('#error-banner', { hasText: 'notes.docx is not a rule sheet file (.json).' }).waitFor();
+  assert.deepEqual(await dropStray(fresh, '#names-box'), [true, true], 'a file dropped on a text box does not open in place of the page');
+  await fresh.locator('#drop-hint', { hasText: 'To add a file, drop it on one of the boxes marked “Drag a file here”.' }).waitFor();
+  assert.equal(new URL(fresh.url()).pathname, '/manuscript/index/');
+  await fresh.getByLabel('Choose the proofs (PDF)').focus();
+  assert.equal(await fresh.evaluate(() => document.activeElement.id), 'pdf-file', 'the file input keeps its label and its place in the tab order');
+  log('drops: a wrong type and two files refused with their message; a stray drop ignored with a hint; the input stays labelled and focusable');
+  await fresh.close();
 
   assert.deepEqual(problems, []);
   log('no page errors and no console errors');

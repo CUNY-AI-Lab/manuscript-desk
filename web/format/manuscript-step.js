@@ -8,6 +8,7 @@ import { readDocx } from '../../lib/docx/read.js';
 import { labelRoles } from '../../lib/roles/label.js';
 import { ROLE_IDS } from '../../lib/roles/roles.js';
 import { ApiError } from '../shared/api.js';
+import { fileInput } from '../shared/drop.js';
 import {
   DAMAGING, FILTERS, ROLE_LABELS, SAVED_KEY, afterLabelling, correctRole, effectiveRoles, labelFailureLines, labellingPlan,
   manuscriptSize, matchFile, neighbours, newLabels, restoredLabels, reviewHeadline, reviewModel, roleLabel, rolesOfReply,
@@ -238,11 +239,7 @@ export function createManuscriptStep(ctx) {
     } catch {}
   }
 
-  $('manuscript-file').addEventListener('change', async event => {
-    const [file] = event.target.files;
-    event.target.value = '';
-    if (file) await chooseFile(file);
-  });
+  fileInput({ input: $('manuscript-file'), zone: $('manuscript-drop'), clear: true, onFiles: ([file]) => chooseFile(file), onProblem: message => showErrors([message]) });
   $('label-button').addEventListener('click', () => void label());
   $('label-stop').addEventListener('click', () => job.labelling?.abort());
 

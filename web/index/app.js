@@ -7,7 +7,7 @@
 import { readDocx } from '../../lib/docx/read.js';
 import { validateDocx } from '../../lib/docx/validate.js';
 import { pageNumbering } from '../../lib/index/indexer.js';
-import { headingOf, newEntry } from '../../lib/index/termlist.js';
+import { headingOf } from '../../lib/index/termlist.js';
 import { KIND_LABELS, applyExclusions, buildWindows, findMatter, firstPageCut, parseManualRanges } from '../../lib/index/matter.js';
 import { judgePlan, runJudge } from '../../lib/index/judge.js';
 import { buildTermPassages, countAndDrop, leftOutParagraphs, mergeProposals, proposeTerms } from '../../lib/index/terms.js';
@@ -15,16 +15,19 @@ import { formatIndex, indexDocx } from '../../lib/index/format.js';
 import { ApiError, createApi } from '../shared/api.js';
 import { chooseModel, modelMenu } from '../shared/models.js';
 import { createStore, watchExpiry } from '../shared/store.js';
+import { fileInput, guardWindow } from '../shared/drop.js';
 import { SAVED_KEY as FORMATTER_LABELS } from '../format/manuscript-state.js';
 import { el } from '../format/rules-view.js';
-import { renderTermEditor, PAGE_SIZE } from './terms-view.js';
+import { renderTermEditor, newView, PAGE_SIZE } from './terms-view.js';
 import {
-  DEFAULT_SETTINGS, JUDGE_SCOPES, SAVED_KEY, STORE_NAME, addEntries, defaultJudgeScope, judgeScopes, editEntry, entriesFromText, indexEntries, mergeEntries, restoredState,
-  savedState, setStatus, settingsFromSheet, termListFile, termsPlan, workingList,
+  DEFAULT_SETTINGS, GROUP_LABELS, JUDGE_SCOPES, SAVED_KEY, STORE_NAME, addEntries, defaultJudgeScope, judgeScopes, editEntry, entriesFromText, indexEntries, mergeEntries, moveEntry, namesFromText,
+  previewNames, restoredState, savedState, setStatus, settingsFromSheet, subjectsFromText, termListFile, termsPlan, workingList,
 } from './state.js';
 
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 const MAX_LIST_FILE_CHARS = 2000000;
+const PREVIEW_ROWS = 40;
+const HOW_NOTES = { 'as-typed': 'kept as you typed it', single: 'a single name, kept as it is', 'known-by': 'kept as you typed it', organization: 'reads like an organization: kept as typed, and better under Subjects' };
 
 async function sha256(bytes) {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
@@ -87,7 +90,7 @@ function start() {
   };
   // Held in memory only: the manuscript's paragraphs, the PDF's page texts, the match.
   // `open`: the groups the author opened, kept open when the page is drawn again.
-  const job = { open: new Set(), manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: { status: 'all', kind: 'all', search: '', limit: PAGE_SIZE, mergeFrom: null, below: false, order: 'rank' } };
+  const job = { open: new Set(), manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] }, view: newView() };
   const reader = createReader();
   let store = null;
   try { if (globalThis.indexedDB) store = createStore({ indexedDB: globalThis.indexedDB, name: STORE_NAME }); } catch {}
@@ -136,17 +139,12 @@ function start() {
       status: (ids, status) => { state.entries = setStatus(state.entries, ids, status); stale(); changed(); },
       edit: (id, changes) => { state.entries = editEntry(state.entries, id, changes); forget(id); stale(); changed(); },
       merge: (from, into) => { state.entries = mergeEntries(state.entries, from, into); job.view.mergeFrom = null; forget(from); forget(into); stale(); changed(); announce('Entries merged.'); },
-      add: ({ heading, variants, section }) => {
-        if (!heading.trim()) { showErrors(['Type a heading for the new entry.']); return; }
-        const taken = new Set(state.entries.map(entry => entry.id));
-        const added = addEntries(state.entries, [newEntry({ section, text: [heading, ...(variants.length ? [`(${variants.join(', ')})`] : [])].join(' '), taken, status: 'accepted' })]);
-        state.entries = added.list;
-        stale();
-        changed();
-        announce(added.added ? 'Entry added.' : 'That entry is already in the list.');
-      },
+      move: (id, section) => moveAll([id], section),
+      moveAll,
       view: change => { Object.assign(job.view, change); render(); },
-      filter: change => { state.settings.filter = { ...state.settings.filter, ...change }; job.view.limit = PAGE_SIZE; changed(); },
+      group: (group, change) => { Object.assign(job.view.groups[group], change); render(); },
+      // People followed the names' threshold until they had their own, so they keep its value.
+      filter: change => { const filter = state.settings.filter; state.settings.filter = { ...filter, people: filter.people ?? filter.names, ...change }; for (const group of Object.values(job.view.groups)) group.limit = PAGE_SIZE; changed(); },
     }, state.settings.filter);
     $('download-list').disabled = !workingList(state.entries).length;
     $('propose-button').disabled = running || !job.manuscript || !model();
@@ -156,7 +154,7 @@ function start() {
     $('ranges-stop').hidden = state.running?.kind !== 'ranges';
     $('judge-stop').hidden = state.running?.kind !== 'judge';
     $('sort-stop').hidden = state.running?.kind !== 'sort';
-    for (const id of ['page-one', 'match-case', 'manual-ranges', 'pdf-file', 'manuscript-file', 'load-list', 'add-pasted']) $(id).disabled = running;
+    for (const id of ['page-one', 'match-case', 'manual-ranges', 'pdf-file', 'manuscript-file', 'load-list', 'list-file', 'add-names', 'add-subjects']) $(id).disabled = running;
     $('page-one').value = state.settings.pageOne;
     $('match-case').checked = state.settings.matchCase;
     $('manual-ranges').value = state.manualRanges;
@@ -492,15 +490,34 @@ function start() {
     addText(text, file.name);
   }
 
-  function addText(text, from) {
-    const { entries, problems } = entriesFromText(text, state.entries);
-    if (!entries.length) { showErrors(['No terms were found there. Put one term or name per line.', ...problems]); return; }
+  // Adds what a file or a box holds; `read` turns its text into entries (entriesFromText, namesFromText, subjectsFromText).
+  function addText(text, from, read = entriesFromText) {
+    const { entries, problems } = read(text, state.entries);
+    if (!entries.length) { showErrors(['Nothing was found there to add. Put one name or subject per line.', ...problems]); return false; }
     const result = addEntries(state.entries, entries);
     state.entries = result.list;
     showErrors(problems);
     stale();
     changed();
     announce(`${plural(result.added, 'entry', 'entries')} added from ${from}${result.skipped ? `; ${result.skipped} already in the list` : ''}.`);
+    return true;
+  }
+
+  function moveAll(ids, section) {
+    for (const id of ids) { state.entries = moveEntry(state.entries, id, section); forget(id); }
+    stale();
+    changed();
+    announce(`${plural(ids.length, 'entry', 'entries')} moved to ${GROUP_LABELS[section]}.`);
+  }
+
+  // Beside the Names box: what each line becomes in the index, before it is added.
+  function renderNamesPreview() {
+    const rows = previewNames($('names-box').value);
+    $('names-preview').hidden = rows.length === 0;
+    $('names-preview-list').replaceChildren(...rows.slice(0, PREVIEW_ROWS).map(row => el('li', {},
+      el('span', { className: 'typed', text: row.typed }), el('span', { 'aria-hidden': 'true', text: ' → ' }), el('span', { className: 'sr-only', text: ' becomes ' }),
+      el('strong', { text: row.heading }), HOW_NOTES[row.how] ? el('span', { className: 'help', text: ` (${HOW_NOTES[row.how]})` }) : null)),
+    ...(rows.length > PREVIEW_ROWS ? [el('li', { className: 'help', text: `and ${plural(rows.length - PREVIEW_ROWS, 'more', 'more')}` })] : []));
   }
 
   async function loadSheet(file) {
@@ -531,7 +548,9 @@ function start() {
     state.running?.abort();
     Object.assign(state, { entries: [], settings: { ...DEFAULT_SETTINGS, filter: { ...DEFAULT_SETTINGS.filter } }, proposing: null, pdf: null, ranges: [], manualRanges: '', decisions: {}, overrides: {}, appliedJudge: {}, assignments: {}, appliedSorting: {} });
     Object.assign(job, { manuscript: null, texts: null, labels: null, match: null, failures: { propose: [], ranges: [], judge: [], sort: [] } });
-    $('paste-box').value = '';
+    $('names-box').value = '';
+    $('subjects-box').value = '';
+    renderNamesPreview();
     $('pdf-file').value = '';
     $('manuscript-file').value = '';
     $('match-status').textContent = '';
@@ -607,15 +626,21 @@ function start() {
 
   // --- Events ---
 
+  // Chosen with the button or dropped on its box, a file goes the same way (web/shared/drop.js).
+  guardWindow();
+  const fileProblem = message => showErrors([message]);
   $('load-list').addEventListener('click', () => $('list-file').click());
-  $('list-file').addEventListener('change', async event => { const [file] = event.target.files; event.target.value = ''; if (file) await loadList(file); });
-  $('add-pasted').addEventListener('click', () => { const text = $('paste-box').value; if (text.trim()) { addText(text, 'the pasted text'); $('paste-box').value = ''; } });
+  fileInput({ input: $('list-file'), zone: $('list-drop'), clear: true, onFiles: ([file]) => loadList(file), onProblem: fileProblem });
+  for (const [box, button, from, read] of [['names-box', 'add-names', 'the Names box', namesFromText], ['subjects-box', 'add-subjects', 'the Subjects box', subjectsFromText]]) {
+    $(button).addEventListener('click', () => { const text = $(box).value; if (text.trim() && addText(text, from, read)) { $(box).value = ''; renderNamesPreview(); } });
+  }
+  $('names-box').addEventListener('input', renderNamesPreview);
   $('download-list').addEventListener('click', () => { const file = termListFile(state.entries); download(file.name, new TextEncoder().encode(file.text), 'text/plain;charset=utf-8'); });
-  $('manuscript-file').addEventListener('change', async event => { const [file] = event.target.files; if (file) await chooseManuscript(file); });
+  fileInput({ input: $('manuscript-file'), zone: $('manuscript-drop'), onFiles: ([file]) => chooseManuscript(file), onProblem: fileProblem });
   $('model-select').addEventListener('change', () => { $('model-select').dataset.chosen = 'true'; render(); });
   $('propose-button').addEventListener('click', () => void propose());
   $('propose-stop').addEventListener('click', () => state.running?.abort());
-  $('pdf-file').addEventListener('change', async event => { const [file] = event.target.files; if (file) await choosePdf(file); });
+  fileInput({ input: $('pdf-file'), zone: $('pdf-drop'), onFiles: ([file]) => choosePdf(file), onProblem: fileProblem });
   $('page-one').addEventListener('change', event => { state.settings.pageOne = event.target.value.trim(); stale(); changed(); });
   $('match-case').addEventListener('change', event => { state.settings.matchCase = event.target.checked; stale(); changed(); });
   $('manual-ranges').addEventListener('change', event => { state.manualRanges = event.target.value.slice(0, 200); stale(); changed(); });
@@ -626,7 +651,7 @@ function start() {
   $('judge-scope').addEventListener('change', event => { job.judgeScope = event.target.value; render(); });
   $('sort-button').addEventListener('click', () => void sortHits());
   $('load-sheet').addEventListener('click', () => $('sheet-file').click());
-  $('sheet-file').addEventListener('change', async event => { const [file] = event.target.files; event.target.value = ''; if (file) await loadSheet(file); });
+  fileInput({ input: $('sheet-file'), zone: $('sheet-drop'), clear: true, onFiles: ([file]) => loadSheet(file), onProblem: fileProblem });
   for (const [id, key] of [['layout-select', 'layout'], ['style-select', 'style'], ['sorting-select', 'sorting']]) $(id).addEventListener('change', event => { state.settings[key] = event.target.value; changed(); });
   $('collapse').addEventListener('change', event => { state.settings.collapse = event.target.checked; changed(); });
   $('download-text').addEventListener('click', () => downloadIndex('text'));

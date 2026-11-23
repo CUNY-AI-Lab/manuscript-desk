@@ -12,6 +12,7 @@ import { cleanPastedText, readGuidelines } from '../../lib/guidelines/read.js';
 import { ApiError, createApi } from '../shared/api.js';
 import { chooseModel, modelMenu } from '../shared/models.js';
 import { createStore, watchExpiry } from '../shared/store.js';
+import { fileInput, guardWindow } from '../shared/drop.js';
 import { el, plainReason, renderAddRule, renderRules } from './rules-view.js';
 import { createManuscriptStep } from './manuscript-step.js';
 import { createOutputStep } from './output-step.js';
@@ -674,11 +675,9 @@ function start() {
 
   for (const input of document.querySelectorAll('input[name="doc-type"]')) input.addEventListener('change', () => chooseDocType(input.value));
   for (const input of document.querySelectorAll('input[name="guideline-source"]')) input.addEventListener('change', () => chooseSource(input.value));
-  $('guideline-files').addEventListener('change', async event => {
-    const files = [...event.target.files];
-    event.target.value = '';
-    if (files.length) await addFiles(files);
-  });
+  // Chosen with the button or dropped on its box, a file goes the same way (web/shared/drop.js).
+  guardWindow();
+  fileInput({ input: $('guideline-files'), zone: $('guidelines-drop'), clear: true, onFiles: addFiles, onProblem: message => showErrors([message]) });
   $('add-pasted').addEventListener('click', addPasted);
   $('model-select').addEventListener('change', () => { $('model-select').dataset.chosen = 'true'; });
   $('roles-model-select').addEventListener('change', () => { $('roles-model-select').dataset.chosen = 'true'; });
@@ -686,11 +685,7 @@ function start() {
   $('stop-button').addEventListener('click', () => state.running?.abort());
   $('download-sheet').addEventListener('click', downloadSheet);
   $('load-sheet').addEventListener('click', () => $('sheet-file').click());
-  $('sheet-file').addEventListener('change', async event => {
-    const [file] = event.target.files;
-    event.target.value = '';
-    if (file) await loadSheet(file);
-  });
+  fileInput({ input: $('sheet-file'), zone: $('sheet-drop'), clear: true, onFiles: ([file]) => loadSheet(file), onProblem: message => showErrors([message]) });
   $('start-over').addEventListener('click', startOver);
   $('delete-saved').addEventListener('click', () => void deleteSaved());
   $('refresh-quota').addEventListener('click', () => void refreshStatus());

@@ -175,6 +175,21 @@ footer { background: white; border-top: 1px solid var(--border-gray); font-size:
   .panel-actions .button, .sheet-actions .button { flex-grow: 1; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto !important; } }
+
+/* Drop areas around the file inputs (web/shared/drop.js). Outlined while a file is dragged over the
+   page, filled while it is over the area itself. The input inside keeps its own focus ring. */
+.drop-zone { border: 2px dashed var(--border-gray); border-radius: 10px; padding: 4px 16px 12px; margin: 18px 0 0; background: white; }
+.drop-zone > label:first-child { margin-top: 12px; }
+.drop-zone > .row-actions:first-child, .drop-zone > .button:first-child { margin-top: 12px; }
+.drop-zone.inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0; padding: 8px 14px; }
+.drop-zone.inline > .button:first-child { margin-top: 0; }
+.drop-zone.inline .drop-label { margin: 0; }
+.drop-label { font-size: .8rem; color: var(--text-muted); margin: 8px 0 0; }
+.dragging-files .drop-zone { border-color: var(--primary-blue); background: #f7f9fe; }
+.drop-zone.drag-over { border-style: solid; border-color: var(--primary-blue); background: #e6eefb; box-shadow: 0 0 0 3px rgba(0,61,165,.18); }
+.drop-zone.drag-over .drop-label { color: var(--secondary-blue); font-weight: 600; }
+.drop-hint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: min(92vw, 520px); margin: 0; padding: 12px 16px; border-radius: 8px; background: var(--dark-navy); color: white; font-size: .875rem; box-shadow: var(--shadow-card); z-index: 40; }
+@media(prefers-reduced-motion:no-preference) { .drop-zone { transition: background-color .15s, border-color .15s, box-shadow .15s; } }
 .opt-in { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; }
 .opt-in input { margin-top: 3px; }
 .opt-in label { margin: 0; font-weight: 600; }
@@ -196,3 +211,18 @@ footer { background: white; border-top: 1px solid var(--border-gray); font-size:
 .index-line { padding-left: 1.5em; text-indent: -1.5em; }
 .index-line.sub { padding-left: 3em; }
 mark { background: #fff2a8; }
+.entry-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 24px; }
+.entry-box > label:first-child { font-size: 1rem; font-weight: 600; color: var(--secondary-blue); }
+.entry-box .help { margin-top: 0; }
+.names-preview { margin: 10px 0 0; padding: 10px 14px; background: var(--light-gray); border-radius: 8px; font-size: .875rem; }
+.names-preview .help { margin: 0 0 6px; }
+.names-preview ul { list-style: none; margin: 0; padding: 0; }
+.names-preview li { margin: 0 0 2px; overflow-wrap: anywhere; }
+.names-preview li .help { display: inline; margin: 0; }
+.list-syntax { margin-top: 14px; }
+.list-syntax summary { cursor: pointer; font-size: .875rem; color: var(--primary-blue); font-weight: 500; }
+.list-syntax .help { margin: 8px 0 0; }
+.term-group { margin-top: 8px; padding-top: 4px; border-top: 2px solid var(--border-gray); }
+.term-group > h3 { margin-top: 16px; }
+.group-counts { font-size: .9rem; font-weight: 500; margin-bottom: 8px; }
+.term-facts { margin: 4px 0 0; }

@@ -16,6 +16,7 @@ import { buildOutputs } from '../../web/format/output-state.js';
 import { RULES, manuscript, sheetWith } from '../manuscript-fixture.mjs';
 import { dissertation } from '../dissertation-fixture.mjs';
 import { presetSheet } from '../../lib/presets/index.js';
+import { dropFiles, dropStray } from './drop-files.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const { chromium } = playwright.default ?? playwright;
@@ -132,10 +133,12 @@ try {
   log('page opened: signed in, usage shown, model menu defaults to deepseek-v4.1-flash-1017, file readers not loaded yet');
 
   await page.getByLabel('Monograph').check();
-  await page.setInputFiles('#guideline-files', join(FIXTURES, 'guidelines.docx'));
+  assert.equal(await page.locator('#guidelines-drop .drop-label').textContent(), 'Drag files here, or choose them');
+  assert.equal(await dropFiles(page, '#guidelines-drop', [join(FIXTURES, 'guidelines.docx')]), true, 'the drop area is marked while the file is over it');
   await page.locator('#sources li', { hasText: 'guidelines.docx' }).waitFor();
+  assert.equal(await page.locator('#guidelines-drop').evaluate(node => node.classList.contains('drag-over')), false, 'and not after the drop');
   assert.equal(requested.filter(path => path.endsWith('/shared/guidelines-extractors.js')).length, 1, 'the file readers load once, when the first file is added');
-  log('Monograph chosen; guidelines.docx added to the list; file readers loaded on demand');
+  log('Monograph chosen; guidelines.docx dropped on its box and added to the list; file readers loaded on demand');
 
   await page.getByRole('button', { name: 'Read the guidelines' }).click();
   const rule = page.locator('.rule', { hasText: 'Use double quotation marks.' });
@@ -493,7 +496,8 @@ try {
   assert.equal(await page7.locator('#format-button').isDisabled(), true, 'nothing to format yet');
   await page7.setInputFiles('#sheet-file', { name: 'sheet.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(sheet7)) });
   await page7.locator('.rule').first().waitFor();
-  await page7.setInputFiles('#manuscript-file', MANUSCRIPT);
+  // The manuscript dropped on its box is read as a chosen one is.
+  await dropFiles(page7, '#manuscript-drop', [MANUSCRIPT]);
   await page7.locator('#manuscript-status', { hasText: '33 paragraphs' }).waitFor();
   assert.match(await page7.locator('#manuscript-status').textContent(), /manuscript\.docx\d[\d,]* words in 33 paragraphs/);
   assert.match(await page7.locator('#roles-plan').textContent(), /^Labelling sends 33 paragraphs to the model in 1 passage, one model call each/);
@@ -590,6 +594,22 @@ try {
   await page8.setInputFiles('#manuscript-file', { name: 'notes.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('plain text, not a Word file') });
   await page8.locator('#error-banner', { hasText: 'notes.docx: This is not a Word (.docx) file.' }).waitFor();
   log('a file that is not a Word file gets the reader\'s plain message');
+  // Dropped, the same checks as chosen, with plain messages; the input stays the keyboard's way in.
+  await dropFiles(page8, '#manuscript-drop', [{ name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') }]);
+  await page8.locator('#error-banner', { hasText: 'notes.pdf is not a Word file (.docx).' }).waitFor();
+  await dropFiles(page8, '#manuscript-drop', [join(FIXTURES, 'manuscript.docx'), join(FIXTURES, 'manuscript-other.docx')]);
+  await page8.locator('#error-banner', { hasText: 'This takes one file at a time, and 2 were given.' }).waitFor();
+  await dropFiles(page8, '#manuscript-drop', [{ name: 'notes.docx', mimeType: '', buffer: Buffer.from('plain text, not a Word file') }]);
+  await page8.locator('#error-banner', { hasText: 'notes.docx: This is not a Word (.docx) file.' }).waitFor();
+  await dropFiles(page8, '#sheet-drop', [{ name: 'sheet.txt', mimeType: 'text/plain', buffer: Buffer.from('{}') }]);
+  await page8.locator('#error-banner', { hasText: 'sheet.txt is not a rule sheet file (.json).' }).waitFor();
+  const address = page8.url();
+  assert.deepEqual(await dropStray(page8, 'h1'), [true, true], 'a file dropped outside the boxes does not open in place of the page');
+  await page8.locator('#drop-hint', { hasText: 'To add a file, drop it on one of the boxes marked “Drag a file here”.' }).waitFor();
+  assert.equal(page8.url(), address);
+  await page8.getByLabel('Choose the manuscript (Word .docx)').focus();
+  assert.equal(await page8.evaluate(() => document.activeElement.id), 'manuscript-file', 'the file input keeps its label and its place in the tab order');
+  log('drops: a wrong type, two files and a non-Word .docx each get their message; a stray drop is ignored with a hint; the input stays labelled and focusable');
   await context8.close();
 
   // ---- A dissertation: the built-in requirements, read by no model, then a manuscript to the end ----

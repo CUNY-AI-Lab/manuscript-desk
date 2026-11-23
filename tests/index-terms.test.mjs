@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PAGE_CHARS, buildTermPassages, compatible, corporateName, countAndDrop, headingLike, leftOutParagraphs, mergeProposals, nameParts, parseTermsReply, personHeading, proposeTerms } from '../lib/index/terms.js';
+import { PAGE_CHARS, buildTermPassages, compatible, corporateName, countAndDrop, headingLike, indexFormOfName, leftOutParagraphs, mergeProposals, nameParts, parseTermsReply, personHeading, proposeTerms } from '../lib/index/terms.js';
+import { reverseName } from '../lib/index/indexer.js';
 import { serializeTermList } from '../lib/index/termlist.js';
 
 // An invented manuscript's paragraphs, in the reader's shape.
@@ -157,4 +158,42 @@ test('the facts proposals are ranked by: pages of about PAGE_CHARS characters, p
   assert.equal(headingLike({ index: 9, text: 'a quiet title', hints: { styleId: 'Heading2' } }), true);
   const [reply] = parseTermsReply(JSON.stringify({ entries: [{ heading: 'archives', kind: 'concept', discussed: true, quote: 'Archives were scarce; the archive' }] }), PASSAGE).proposals;
   assert.equal(reply.discussed, true);
+});
+
+test('a name typed as it is said is put surname first, with personHeading\'s particles and honorifics', () => {
+  const cases = [
+    ['Mary Shelley', 'Shelley, Mary', 'inverted'],
+    ['Mary Wollstonecraft Shelley', 'Shelley, Mary Wollstonecraft', 'inverted'],
+    ['T. S. Eliot', 'Eliot, T. S.', 'inverted'],
+    ['Simone de Beauvoir', 'Beauvoir, Simone de', 'inverted'],
+    ['Ludwig van Beethoven', 'Beethoven, Ludwig van', 'inverted'],
+    ['Johann Wolfgang von Goethe', 'Goethe, Johann Wolfgang von', 'inverted'],
+    ['Jean de La Fontaine', 'La Fontaine, Jean de', 'inverted'],
+    ['W. E. B. Du Bois', 'Du Bois, W. E. B.', 'inverted'],
+    ['Thomas De Quincey', 'De Quincey, Thomas', 'inverted'],
+    ['Ursula K. Le Guin', 'Le Guin, Ursula K.', 'inverted'],
+    ['Van Morrison', 'Morrison, Van', 'inverted'],
+    ['Martin Luther King Jr.', 'King, Martin Luther, Jr.', 'inverted'],
+    ['Martin Luther King, Jr.', 'King, Martin Luther, Jr.', 'inverted'],
+    ['Henry Ford, II', 'Ford, Henry, II', 'inverted'],
+    ['Dr. Ada Example', 'Example, Ada', 'inverted'],
+    ['John “Sonny” Example', 'Example, John “Sonny”', 'inverted'],
+    ['bell hooks', 'hooks, bell', 'inverted'],
+    ['Jet Li', 'Li, Jet', 'inverted'],
+    ['Shelley, Mary', 'Shelley, Mary', 'as-typed'],
+    ['de Beauvoir,  Simone', 'de Beauvoir, Simone', 'as-typed'],
+    ['Plato', 'Plato', 'single'],
+    ['Elizabeth I', 'Elizabeth I', 'known-by'],
+    ['John Paul II', 'John Paul II', 'known-by'],
+    ['Malcolm X', 'Malcolm X', 'known-by'],
+    ['Saint Augustine', 'Saint Augustine', 'known-by'],
+    ['Queen Victoria', 'Queen Victoria', 'known-by'],
+    ['Francis of Assisi', 'Francis of Assisi', 'known-by'],
+    ['Mrs. Dalloway', 'Mrs. Dalloway', 'known-by'],
+    ['Example Brothers', 'Example Brothers', 'organization'],
+  ];
+  for (const [typed, heading, how] of cases) assert.deepEqual(indexFormOfName(typed), { heading, how }, typed);
+  // Searched in the proofs as typed: the matcher's own reversal gives the typed order back.
+  for (const typed of ['Mary Shelley', 'Simone de Beauvoir', 'W. E. B. Du Bois', 'Ludwig van Beethoven']) assert.equal(reverseName(indexFormOfName(typed).heading)[0], typed);
+  assert.deepEqual(reverseName(indexFormOfName('Martin Luther King Jr.').heading), ['Martin Luther King Jr.', 'Martin Luther King, Jr.']);
 });

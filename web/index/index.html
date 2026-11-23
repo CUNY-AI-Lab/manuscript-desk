@@ -25,21 +25,44 @@
 
 <section class="panel" aria-labelledby="terms-title">
 <h2 id="terms-title" tabindex="-1">1. Term list</h2>
-<p class="section-intro">The terms and names the index covers, one per line, with other forms to search for in parentheses: <code>artificial intelligence (AI, machine learning)</code>. Names go under a line <code>Names:</code>, written <code>Last, First</code>; the proofs are searched for “First Last”. A line indented under an entry is a subentry, or a cross-reference written <code>see …</code> or <code>see also …</code>; <code>[ambiguous]</code> after an entry asks for its hits to be judged. A list from book-index works as it is.</p>
+<p class="section-intro">The list of what your index covers: the people in one box, everything else in the other. Type them, load a list you saved before, or let a model propose them from your manuscript. The page then finds each one in the typeset proofs (step 2). Only the entries you accept go into the index.</p>
 <fieldset id="list-controls" class="plain">
-<legend class="sr-only">Load or add terms</legend>
-<div class="row-actions"><button id="load-list" class="button secondary" type="button">Load a term list</button><input id="list-file" type="file" accept=".txt,text/plain" hidden><button id="download-list" class="button secondary" type="button" disabled>Download the term list</button></div>
-<label for="paste-box">Or paste or type terms</label>
-<textarea id="paste-box" rows="5" spellcheck="false"></textarea>
-<div class="row-actions"><button id="add-pasted" class="button secondary" type="button">Add these terms</button></div>
+<legend class="sr-only">Type names and subjects</legend>
+<div class="entry-boxes">
+<div class="entry-box">
+<label for="names-box">Names</label>
+<p id="names-help" class="help">People, one per line. Type them as you would say them, e.g. “Mary Shelley”; we put the surname first. A name you type surname first, such as “Shelley, Mary”, is kept as it is.</p>
+<textarea id="names-box" rows="5" spellcheck="false" aria-describedby="names-help names-preview-note"></textarea>
+<div id="names-preview" class="names-preview" hidden><p id="names-preview-note" class="help">How each will appear in the index. If one is wrong, add it and then change it in the list below.</p><ul id="names-preview-list"></ul></div>
+<div class="row-actions"><button id="add-names" class="button secondary" type="button">Add these names</button></div>
+</div>
+<div class="entry-box">
+<label for="subjects-box">Subjects</label>
+<p id="subjects-help" class="help">Concepts, places, organizations, events and titles of works, one per line, as the index should print them. Other words for the same thing, to look for in the proofs too, go in parentheses: “artificial intelligence (AI, machine learning)”.</p>
+<textarea id="subjects-box" rows="5" spellcheck="false" aria-describedby="subjects-help"></textarea>
+<div class="row-actions"><button id="add-subjects" class="button secondary" type="button">Add these subjects</button></div>
+</div>
+</div>
+<div class="drop-zone" id="list-drop">
+<div class="row-actions"><button id="load-list" class="button secondary" type="button">Load a term list</button><input id="list-file" type="file" data-file-kind="term-list" accept=".txt,text/plain" hidden></div>
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
+<div class="row-actions"><button id="download-list" class="button secondary" type="button" disabled>Download the term list</button></div>
+<details class="list-syntax">
+<summary>How a term list file is written</summary>
+<p class="help">A plain text file, one entry per line, with other forms to search for in parentheses: <code>artificial intelligence (AI, machine learning)</code>. People go under a line <code>Names:</code>, written surname first (<code>Shelley, Mary</code>), and everything else under a line <code>Terms:</code>; a file without these lines is all subjects. A line indented under an entry is a subentry, or a cross-reference written <code>see …</code> or <code>see also …</code>. <code>[ambiguous]</code> after an entry asks for each place it is found to be checked in step 2. A list from book-index works as it is, and the list downloaded here is written the same way.</p>
+</details>
 </fieldset>
 
 <h3>Propose terms from the manuscript</h3>
-<p class="help">A model reads the manuscript passage by passage and proposes entries: people (surname first), places, organizations, works and concepts, with other forms they take. Each proposal quotes its passage, and is left out when the quotation is not there. Bibliographies are left out, by the paragraph labels the Formatter keeps in this browser for the same file or else by their headings; footnotes and endnotes are not read. You then accept, drop, merge, rename or add.</p>
+<p class="help">A model reads the manuscript passage by passage and proposes entries: people under Names, and places, organizations, titles of works and concepts under Subjects, with the other forms they take. Each proposal quotes its passage, and is left out when the quotation is not there. Bibliographies are left out, found by the paragraph labels the Formatter keeps in this browser for the same file or else by their headings; footnotes and endnotes are not read. You then accept, drop, merge, rename or move each one.</p>
 <fieldset id="manuscript-controls" class="plain">
 <legend class="sr-only">Choose the manuscript</legend>
+<div class="drop-zone" id="manuscript-drop">
 <label for="manuscript-file">Choose the manuscript (Word .docx)</label>
-<input id="manuscript-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<input id="manuscript-file" type="file" data-file-kind="manuscript" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
 <p id="manuscript-status" class="help" aria-live="polite"></p>
 <label for="model-select">Model</label>
 <select id="model-select" aria-describedby="model-help"></select>
@@ -53,14 +76,17 @@
 
 <section class="panel" aria-labelledby="proofs-title">
 <h2 id="proofs-title" tabindex="-1">2. The proofs</h2>
-<p class="section-intro">Choose the typeset book as a PDF with selectable text. It is read in this browser and every term of the list is found on its pages, with no model, as book-index finds them. The optional helpers below then use a model where that saves you hand work.</p>
+<p class="section-intro">Choose the typeset book (the proofs) as a PDF whose text you can select. It is read in this browser and every accepted entry of the list is found on its pages, with no model, as book-index finds them. The optional helpers below then use a model where that saves you hand work.</p>
 <fieldset id="pdf-controls" class="plain">
 <legend class="sr-only">Choose the proofs</legend>
+<div class="drop-zone" id="pdf-drop">
 <label for="pdf-file">Choose the proofs (PDF)</label>
-<input id="pdf-file" type="file" accept="application/pdf,.pdf">
+<input id="pdf-file" type="file" data-file-kind="proofs" accept="application/pdf,.pdf">
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
 <label for="page-one">Book page 1 is PDF page</label>
 <input id="page-one" type="number" min="1" step="1" inputmode="numeric" aria-describedby="page-one-help">
-<p id="page-one-help" class="help">Leave this empty to use the page numbers stored in the PDF, or to count from its first page if it has none. Pages before it are skipped.</p>
+<p id="page-one-help" class="help">The PDF page that carries the printed page number 1, usually the first page of the introduction or chapter 1. Leave this empty to use the page numbers stored in the PDF, or to count from its first page if it has none. Pages before it are skipped.</p>
 <div class="opt-in"><input id="match-case" type="checkbox" aria-describedby="match-case-help"><label for="match-case">Match capitalization</label></div>
 <p id="match-case-help" class="help">When on, “US” finds “US” but not “us”, and “Bush” the name but not the shrub.</p>
 </fieldset>
@@ -77,7 +103,7 @@
 <div id="ranges-area"></div>
 
 <h3>Ambiguous terms</h3>
-<p class="help">Entries whose hits may not all mean the entry: marked by you, a capitalized term found in lower case, a short abbreviation, a word another entry also searches for, a surname shared by people in the list, hits inside another entry’s longer hit. A model can read each hit with the words around it and propose keeping or dropping it, with a reason. Nothing is dropped until you apply it, and you can change each one.</p>
+<p class="help">A hit is a place in the proofs where an entry's words were found. Some hits may not mean the entry, such as “bush” the plant found for “Bush” the president. The entries to check are those you mark “Ambiguous” and those the tool flags: a capitalized term found in lower case, a short abbreviation, a word another entry also searches for, a surname shared by people in the list, hits inside another entry’s longer hit. A model can read each hit with the words around it and propose keeping or dropping it, with a reason. Nothing is dropped until you apply it, and you can change each one.</p>
 <label for="judge-scope">Which entries to judge</label>
 <select id="judge-scope" disabled aria-describedby="judge-scope-help"></select>
 <p id="judge-scope-help" class="help">Each choice says how many model calls it makes. Mark an entry “Ambiguous” in the term list to judge only the ones you choose.</p>
@@ -85,7 +111,7 @@
 <div id="judge-area"></div>
 
 <h3>Subentries</h3>
-<p class="help">A page goes to a subentry when the subentry’s own words are on it. A model can read the other hits of an entry with subentries and propose the subentry each belongs to; you apply them entry by entry.</p>
+<p class="help">A subentry is a narrower heading printed under an entry, such as “early life” under a person. A page goes to a subentry when the subentry’s own words are on it. A model can read the other hits of an entry with subentries and propose the subentry each belongs to; you apply them entry by entry.</p>
 <div class="panel-actions"><button id="sort-button" class="button secondary" type="button" disabled>Sort hits into subentries</button><button id="sort-stop" class="button secondary" type="button" hidden>Stop</button></div>
 <div id="sort-area"></div>
 <div id="helper-progress-area" hidden><p id="helper-progress-text" role="status" aria-live="polite"></p><progress id="helper-progress" max="1" value="0" aria-labelledby="helper-progress-text"></progress></div>
@@ -93,10 +119,13 @@
 
 <section class="panel" aria-labelledby="output-title">
 <h2 id="output-title" tabindex="-1">3. The index</h2>
-<p class="section-intro">Set the index as your press asks. Loading the rule sheet you made with the Formatter sets these from the guidelines when they say.</p>
+<p class="section-intro">Set the index as your press asks. If you made a rule sheet for this book with the Formatter, load it and these are set from the guidelines where they say.</p>
 <fieldset id="style-controls" class="plain">
 <legend class="sr-only">Index style</legend>
-<div class="row-actions"><button id="load-sheet" class="button secondary" type="button">Load a rule sheet</button><input id="sheet-file" type="file" accept=".json,application/json" hidden></div>
+<div class="drop-zone" id="sheet-drop">
+<div class="row-actions"><button id="load-sheet" class="button secondary" type="button">Load a rule sheet</button><input id="sheet-file" type="file" data-file-kind="rule-sheet" accept=".json,application/json" hidden></div>
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
 <p id="sheet-status" class="help" aria-live="polite"></p>
 <label for="layout-select">Layout</label>
 <select id="layout-select"><option value="indented">Indented: each subentry on its own line</option><option value="run-in">Run-in: subentries in one paragraph</option></select>

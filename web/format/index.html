@@ -45,8 +45,11 @@
 </fieldset>
 <fieldset id="guidelines-controls" class="plain">
 <legend class="sr-only">Add guidelines</legend>
+<div class="drop-zone" id="guidelines-drop">
 <label for="guideline-files">Upload the guidelines (PDF or Word)</label>
-<input id="guideline-files" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple>
+<input id="guideline-files" type="file" data-file-kind="guidelines" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple>
+<p class="drop-label" aria-hidden="true">Drag files here, or choose them</p>
+</div>
 <label for="paste-box">Or paste the guidelines</label>
 <textarea id="paste-box" rows="7"></textarea>
 <div class="row-actions"><button id="add-pasted" class="button secondary" type="button">Add pasted text</button></div>
@@ -73,8 +76,11 @@
 <div id="add-rule-area" class="add-rule-area"></div>
 <div class="sheet-actions">
 <button id="download-sheet" class="button primary" type="button" disabled>Download rule sheet</button>
+<div class="drop-zone inline" id="sheet-drop">
 <button id="load-sheet" class="button secondary" type="button">Load a rule sheet</button>
-<input id="sheet-file" type="file" accept=".json,application/json" hidden>
+<input id="sheet-file" type="file" data-file-kind="rule-sheet" accept=".json,application/json" hidden>
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
 </div>
 </div>
 </section>
@@ -84,8 +90,11 @@
 <p class="section-intro">Choose the manuscript as one Word (.docx) file. It is read in this browser and is not uploaded; it stays in this page's memory until you close or reload the page, choose Start over, or the page deletes your work 24 hours after your last change.</p>
 <fieldset id="manuscript-controls" class="plain">
 <legend class="sr-only">Choose the manuscript</legend>
+<div class="drop-zone" id="manuscript-drop">
 <label for="manuscript-file">Choose the manuscript (Word .docx)</label>
-<input id="manuscript-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<input id="manuscript-file" type="file" data-file-kind="manuscript" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
+</div>
 </fieldset>
 <div id="manuscript-status" aria-live="polite"></div>
 </section>
