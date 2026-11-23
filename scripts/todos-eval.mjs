@@ -39,7 +39,7 @@ import { fullTitle } from '../lib/todos/shared.js';
 import { ruleWith } from '../lib/checks/rules.js';
 import { commentsFor, todosDocument } from '../lib/todos/todos.js';
 import { validateSheet } from '../lib/rules/schema.js';
-import { READING_THINKING, readingPayload, readingPrompt, runningTitlesPayload } from '../server/prompts.js';
+import { READING_MAX_TOKENS, READING_THINKING, readingPayload, readingPrompt, runningTitlesPayload } from '../server/prompts.js';
 import { checkGold } from './roles-eval.mjs';
 import { costOf, createGatewayCall, readCatalog, table } from './generality.mjs';
 
@@ -182,7 +182,12 @@ async function runningTitles({ work, sheet, report, paragraphs, environment, err
  * The reading check on the units given, its answers cached in work/reading-answers.json by model
  * and request text; a call is made only when the cache is missing, with the key in CAIL_API_KEY.
  */
+// An answer that ran out of room is cached with the hard cap it ran out at; one cached without a cap
+// ran out at the 10,000 tokens every reading call had before round 7. A larger cap asks it again,
+// while an answer that finished is kept: the cap changes nothing before it is reached.
 const OUT_OF_ROOM = '\u0000model_output_limit';
+const EARLIER_CAP = 10000;
+const ranOutAt = value => (typeof value === 'string' && value.startsWith(OUT_OF_ROOM) ? Number(value.slice(OUT_OF_ROOM.length + 1)) || EARLIER_CAP : null);
 async function reading({ work, units, environment, err }) {
   const file = path.join(work, 'reading-answers.json');
   const cache = (await readJson(file))?.answers ?? {};
@@ -195,8 +200,9 @@ async function reading({ work, units, environment, err }) {
     const id = `${model}\u0000${READING_THINKING}\u0000${readingPrompt()}\u0000${unit}`;
     // An answer that ran out of room is cached too, so a re-score reads the same halves.
     const outOfRoom = () => Object.assign(new Error('model_output_limit'), { code: 'model_output_limit', retry: false });
-    if (cache[id] === OUT_OF_ROOM) { cached += 1; throw outOfRoom(); }
-    if (cache[id]) { cached += 1; return cache[id]; }
+    const cap = ranOutAt(cache[id]);
+    if (cap !== null && cap >= READING_MAX_TOKENS) { cached += 1; throw outOfRoom(); }
+    if (cache[id] && cap === null) { cached += 1; return cache[id]; }
     const key = environment.CAIL_API_KEY?.trim();
     if (!key) throw new Error('The reading answers are not cached and CAIL_API_KEY is not set; set it to your CAIL Gateway key (it pays for the calls).');
     rows ??= (await readCatalog()) ?? new Map();
@@ -206,7 +212,7 @@ async function reading({ work, units, environment, err }) {
       ({ content } = await call({ model, unit }));
     } catch (error) {
       if (error?.code !== 'model_output_limit') throw error;
-      cache[id] = OUT_OF_ROOM;
+      cache[id] = `${OUT_OF_ROOM}\u0000${READING_MAX_TOKENS}`;
       await writeFile(file, JSON.stringify({ answers: cache }));
       throw outOfRoom();
     }

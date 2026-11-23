@@ -238,6 +238,12 @@ Reply with JSON only, no other text, in this shape:
 export const READING_OUTPUT_TOKENS = 2500;
 // Whether a reasoning model keeps its thinking on for the reading check.
 export const READING_THINKING = true;
+// The hard cap of one reading call with thinking on. The answers themselves are short (round 6: at
+// most about 3,600 characters, a thousand tokens), but the thinking before them used up the usual
+// 10,000 tokens on 6 of the 21 calls of round 6's page run, halves of chapters included. On the
+// default model such a call took 61 to 65 seconds through the page, so twice the room stays inside
+// the three-minute deadline (docs/eval/brill-loop.md, round 7).
+export const READING_MAX_TOKENS = 20000;
 
 /**
  * The chat payload for the reading check of one chapter, exactly as POST /api/reading sends it.
@@ -249,6 +255,6 @@ export function readingPayload({ model, unit, row }) {
     temperature: 0,
     response_format: { type: 'json_object' },
     messages: [{ role: 'system', content: readingPrompt() }, { role: 'user', content: unit }],
-    ...modelControls(row, READING_OUTPUT_TOKENS, { thinking: READING_THINKING }),
+    ...modelControls(row, READING_OUTPUT_TOKENS, { thinking: READING_THINKING, maxTokens: READING_MAX_TOKENS }),
   };
 }

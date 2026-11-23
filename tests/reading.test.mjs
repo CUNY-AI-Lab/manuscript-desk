@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BODY_CHARS, NOTE_SIGN, PAIRED, READING_KINDS, halveUnit, parseReadingReply, readChapters, readingFindings, readingUnits } from '../lib/checks/reading.js';
-import { readingPayload, readingPrompt } from '../server/prompts.js';
+import { READING_MAX_TOKENS, readingPayload, readingPrompt } from '../server/prompts.js';
 import { createHandler } from '../server/worker.js';
 import { commentsFor, todosDocument } from '../lib/todos/todos.js';
 import { KIND_LABELS } from '../lib/todos/shared.js';
@@ -175,6 +175,10 @@ test('the reading prompt lists the kinds and asks for quotations; the payload ke
   assert.equal(payload.temperature, 0);
   assert.deepEqual(payload.messages[1], { role: 'user', content: UNIT.text });
   assert.deepEqual(payload.chat_template_kwargs, { enable_thinking: true });
+  assert.equal(payload.max_tokens, READING_MAX_TOKENS, 'more room than other calls, for the thinking before a short answer');
+  assert.ok(READING_MAX_TOKENS > 10000);
+  assert.equal(readingPayload({ model: 'm', unit: UNIT.text, row: { capabilities: ['reasoning'], provider: 'workers-ai', context_length: 100000, max_output_tokens: 8192 } }).max_tokens, 8192, 'never over the catalog\'s own output limit');
+  assert.equal(readingPayload({ model: 'm', unit: UNIT.text, row: { capabilities: ['reasoning'], provider: 'workers-ai', context_length: 16000 } }).max_tokens, 8000, 'never over half the context window');
 });
 
 test('POST /api/reading sends the unit with the reading prompt, and refuses an empty or oversized unit without echoing it', async () => {

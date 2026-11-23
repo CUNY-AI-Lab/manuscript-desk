@@ -15,11 +15,14 @@ const REASONING_MAX_TOKENS = 10000;
 
 // With { thinking: true } a reasoning model keeps its thinking on (low effort) and gets the whole
 // hard cap: a call that must weigh many small judgments together, such as the roles of a passage's
-// paragraphs, is worth the extra output.
-export function modelControls(row, expectedOutputTokens, { thinking = false } = {}) {
+// paragraphs, is worth the extra output. `maxTokens` sets another hard cap for such a call (the
+// reading check, whose thinking can outrun the usual one), still held under half the context
+// window and under the catalog's own output limit when the row gives one.
+export function modelControls(row, expectedOutputTokens, { thinking = false, maxTokens = REASONING_MAX_TOKENS } = {}) {
   const contextCap = Number.isInteger(row?.context_length) && row.context_length > 0 ? Math.floor(row.context_length / 2) : Infinity;
+  const outputCap = Number.isInteger(row?.max_output_tokens) && row.max_output_tokens > 0 ? row.max_output_tokens : Infinity;
   if (row?.capabilities.includes('reasoning') && thinking) {
-    return { max_tokens: Math.min(REASONING_MAX_TOKENS, contextCap), reasoning_effort: 'low', ...(row.provider === 'workers-ai' ? { chat_template_kwargs: { enable_thinking: true } } : {}) };
+    return { max_tokens: Math.min(maxTokens, contextCap, outputCap), reasoning_effort: 'low', ...(row.provider === 'workers-ai' ? { chat_template_kwargs: { enable_thinking: true } } : {}) };
   }
   if (row?.capabilities.includes('reasoning')) {
     // The Gateway rejects reasoning_effort for a model without the reasoning capability, so it is
