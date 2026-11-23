@@ -658,3 +658,166 @@ measurements ($0.144, $0.147, $0.257 and $0.287 at catalog prices), two generali
 cases ($0.57 and $0.63), small checks on two journals ($0.065) and the end-to-end run. Catalog
 prices take no account of the discount on cached input, so they add up to more than the Gateway
 billed.
+
+## Round 5: settings by a focused question, and a reading check
+
+### A. Settings that dropped out, without doubling the calls
+
+What changed (`lib/rules/extract.js`, `server/prompts.js`, `lib/calls/backoff.js`, `lib/rules/quote.js`):
+
+- Each part of the guidelines is read once per group of categories, as before round 4. Then, for the
+  settings no reading filled, each part is asked once, through `POST /api/settings`, whether it states
+  them, with the sentence that does: one call per part listing every missing setting. An answer counts
+  only as a setting it was asked for, with its slot and a verified quotation; two parts that state a
+  setting differently make a conflict. A failed question is a failure of its own ("settings") group,
+  and "Try again" asks only that part, leaving out the settings the sheet already has.
+- The settings question says that an approximate figure ("about", "ca.") states the setting, and that
+  one sentence may state several settings. Without this the abstract length, given as an approximate
+  number in the same sentence as the keyword count, was never reported.
+- The quotation check drops a hyphen or dash between two letters, with or without one space after it,
+  in the quotation and the guidelines alike. A model retypes a PDF line-break hyphen as "key-words" or
+  "key- words", and those quotations had failed; this also fixes a break across a blank line. It is why
+  the rules left out fell from 68 to 10 over five runs below.
+- A call the Gateway refuses for its rate limit (status 429 or a rate-limit code; never a spent
+  allowance) is asked again after 2, 4 and 8 seconds, or after its Retry-After up to 30 seconds, in the
+  rules reading, the settings question, the labelling and the reading check. Before, it was asked once
+  more at once, and was refused again.
+
+Five runs on the Brill guidelines (`npm run generality -- --only brill --repeat 5`), runs filled of
+five, and in brackets where a run held rules that disagree:
+
+| Setting | Round 4 final (two readings) | Round 5, first wording | Round 5 final |
+|---|---|---|---|
+| chapters.subtitle | 5 | 5 | 5 |
+| running-title.length | 4 | 5 | 5 |
+| abstract.words | 3 | 3 | 5 |
+| keywords.count | 4 | 3 | 5 |
+| figures.callouts | 3 | 5 | 5 |
+| notes.kind | 0 | 1 | 5 |
+| quotes.primary, quotes.punctuation | 0 | 0 | 5 each |
+| the eight round 4 also filled every time | 5 each | 5 each | 5 each |
+| figures.numbering | 5 (conflict in 1) | 5 (conflict in 1) | 5 (conflict in 1) |
+| figures.markers | 5 (conflict in 5) | 5 (conflict in 5) | 5 (conflict in 4) |
+| dash.ranges, layout.font | 0 | 1, 0 | 2, 1 |
+| **Settings filled in all five runs** | **11** | **13** | **18** |
+| Calls per run | 18 | 12 | 12 |
+| Failed parts in five runs | 1 (4 in ten runs) | 0 | 0 |
+| Calls refused by the Gateway | not counted | 0 | 0 |
+| Rules left out (quotation not found), five runs | not recorded | 68 | 10 |
+| Expected rules found | 117/125 | 118/125 | 120/125 |
+| Cost of five runs (catalog prices) | $0.287 | $0.180 | $0.185 |
+
+"First wording" is the settings question before the two lines on approximate figures and shared
+sentences, and before the quotation change. In the final runs the questions filled between 0 and 5
+settings a run (the title split and the running title in one run, the abstract length in three).
+
+Generality, `npm run generality -- --models deepseek-v4.1-flash-1017`, all 18 cases, final code:
+**417 of 438 expected rules (95.2%) in 110 calls (27 of them settings questions), no failed call, no
+call refused**, against round 4's 414 in 162 calls. $0.38 at catalog prices against $0.63. The
+script's verdict was **FAIL**: one edited-collection case found 13 of 17 (76.5%), under the 80%
+floor for a case. Its misses are plain requirements of the first reading (referees, forms, a
+checklist), not settings, and the settings question filled nothing in it. Read four more times it
+found 15, 14, 15 and 17 of 17: that case varies by four rules from run to run in the one reading both
+rounds share. Nothing was changed for it.
+
+### B. Comments that need reading the prose
+
+What changed (`lib/checks/reading.js`, `POST /api/reading`, step 6 of the page, `todos-eval --reading`):
+
+- For each chapter, one call sends its title block, abstract and keywords, its headings, and its
+  running text up to 8,000 characters, with the sheet's rules about the title page, abstract and
+  keywords. The model reports only six kinds: the same thing named or spelled two ways, a name or
+  affiliation given two ways, missing spaces, typing slips, stray or repeated text, and an abstract or
+  keywords against a listed rule. It is told what not to report (style, argument, capitals, quotation
+  marks, citation form, lengths and counts, which code checks).
+- Model output is not trusted. A finding is kept only when it names a paragraph it was shown and
+  quotes words that `findQuote` finds in that paragraph; the two kinds that compare places must quote
+  the other place too, and the two quotations must differ. The reader now records where note
+  references stand, and the text sent marks them, so that words on either side of a note are not
+  reported as run together (a finding that quotes across a note marker as missing spaces is dropped).
+- Findings become Word comments and To-dos entries, each beginning "Query from a model's reading of
+  the text, for you to check", quoting the place (and the other place), never a change to the text.
+- The model keeps its thinking on (low effort). On the dev chapters, with thinking off, it gave 27
+  findings, of which 13 were real and 14 were what the prompt excludes (capitals, quotation marks,
+  facts from outside the text, ordinary short forms of a name); with thinking on, 13, all real or
+  reasonable. Thinking sometimes uses up the output room: such a chapter is read again as two halves,
+  each with the chapter's opening.
+- On the page the check is an opt-in box in step 6 that states its number of calls (one per chapter)
+  and what is sent; the privacy statement says so. The browser smoke test ticks it with a mocked model
+  and confirms that the invented quotation is dropped.
+
+Measured against the reference's 12 reading-class comments (gold roles, hand sheet). Of the 12, five
+are in the front matter (reported with dev), none in a dev chapter, seven in holdout chapters.
+
+| | Reading comments found | Extra findings | Of the extras, real on my reading |
+|---|---|---|---|
+| Dev chapters and front matter | 0/5 (all five are in the front matter, which the check does not read) | 13 | 13 (2 of them judgment calls) |
+| Holdout, run once, nothing changed after | 3/7 | 17 | 16 (1 doubtful) |
+| Whole book, predicted roles and the round 5 extracted sheet | 2/12 | 41 (12 not in the gold-roles run) | of a sample of the 12 new ones, 9 or 10 |
+
+The real extras are what an editor queries: a doubled word, a misspelt or garbled word, a work's
+title or a person's name given two ways in the abstract and the text, a stray bracket or slash, a
+repeated keyword, missing spaces in an abstract. None is in the reference, which queried such slips
+only where they were many. The doubtful ones rest on knowledge from outside the text (a name's usual
+spelling) or call an ordinary short form of a name an inconsistency.
+
+Holdout misses: two affiliations that differ from the notes on contributors (the check does not read
+those notes, which have no role); one stray symbol that the source uses many times as a typed note
+marker, which the model did not report; and one name given two ways that the model did report, but
+at the paragraph next to a second finding of the same kind, which the matching counts as one place.
+
+Cost: about $0.01 a chapter at catalog prices, $0.12 to $0.14 for this book.
+
+### C. Front matter: skipped
+
+Not done. The gold roles leave the front matter unlabelled, so measuring contents entries and
+contributor notes would mean labelling them by hand first, and the part titles the reference has were
+built by the manual job (the source has none). Doing that and the two comparisons well did not fit
+this round. Role accuracy was not re-measured, since no role changed.
+
+### The whole book with the final code
+
+| Run | Matched (near) | Style agrees | Title block | Structure comments | Reading comments | Extra places | Validity |
+|---|---|---|---|---|---|---|---|
+| Gold roles, hand sheet | 1,353 (14) of 1,383 | 99.4% | 46/46 | 18/26 | 3/12 | 42 | valid, 52 comments |
+| Predicted roles, round 5 extracted sheet (151 rules) | 1,346 (8) of 1,383 | 98.6% | 46/46 | 17/26 | 2/12 | 53 | valid, 64 comments |
+
+Formatting with gold roles and the hand sheet is unchanged from rounds 2 to 4 (dev 629 (10) and 100.0%,
+holdout 724 (4) and 98.9%; 45 tracked changes; no undeclared word change). With predicted roles and
+the round 5 sheet the title split is now in the sheet, so titles are split and the dev title block is
+20/20 (round 4's page run: 10/11); the figure markers are still a conflict, so they are not rewritten
+(16 tracked changes, all rejected give back the source's words). The structure comments are round 3's
+(18 of 26 with gold roles); the extra places grew from 17 to 42 by the reading check's findings.
+
+### What remains
+
+- The reading check reads only chapters. Four of the five front-matter reading comments, and the two
+  affiliation comments in holdout chapters, need the contents list and the notes on contributors,
+  which have no role (C).
+- One reading of the guidelines still varies by several requirements from run to run on some cases
+  (13 to 17 of 17 on one); the generality verdict failed on that variance this round.
+- The figure numbering and marker settings are a conflict on these guidelines in most runs, so the
+  author must choose before markers are rewritten.
+- The reading check's extras are mostly real, but a scholar sees 2 to 3 per chapter that the
+  reference left unsaid; whether that is welcome is untested with a scholar.
+- The check reads 8,000 characters of each chapter's running text; slips later in a chapter are not
+  looked for.
+
+### What round 6 should do
+
+- Front matter roles (contents entry, contributor note, part title), labelled by hand in the gold
+  first, then the contents comparison and the contributor notes against the title blocks, and the
+  notes on contributors added to the reading check's units.
+- The first reading's run-to-run variance on plain requirements: measure the low case ten times, then
+  try a focused question for the requirements of a category a reading left empty, as this round did
+  for settings.
+- Read the reading check's extras with a scholar on the page, and decide whether slips (typing,
+  spacing) should be grouped into one comment per chapter.
+- A second manuscript, ideally one whose source uses styles.
+
+Spent in this round: $0.73 by the Gateway's estimate ($5.69 to $4.96 of the allowance left): three
+five-run measurements on the Brill guidelines and small probes of the settings question ($0.41 at
+catalog prices), the 18-case generality run ($0.38), four repeats of the low case ($0.03), and the
+reading check on dev, holdout and the whole book with predicted roles ($0.34). Catalog prices take no
+account of the discount on cached input, so they add up to more than the Gateway billed. Every answer
+of the reading check is cached in the case's `work/` folder.
