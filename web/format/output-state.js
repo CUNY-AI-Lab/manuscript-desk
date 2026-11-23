@@ -79,10 +79,12 @@ export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, prop
     const units = readingUnits({ paragraphs, roles, chapters: report.chapters, sheet });
     try {
       const result = await readChapters({ units, model: null, call: readText, onProgress: onReading });
-      reading = { chapters: units.length, failed: result.failures.length, found: result.findings.length };
-      findings = [...findings, ...readingFindings(withoutRepeats(result.findings, findings))].sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
+      const kept = withoutRepeats(result.findings, findings);
+      reading = { chapters: units.filter(unit => unit.chapter !== null).length, matter: units.some(unit => unit.chapter === null), failed: result.failures.length,
+        outOfRoom: result.failures.length > 0 && result.failures.every(failure => failure.code === 'model_output_limit'), found: kept.length };
+      findings = [...findings, ...readingFindings(kept)].sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
     } catch {
-      reading = { chapters: units.length, failed: units.length, found: 0 };
+      reading = { chapters: units.filter(unit => unit.chapter !== null).length, matter: units.some(unit => unit.chapter === null), failed: units.length, found: 0 };
     }
   }
   try {
@@ -139,13 +141,13 @@ export function outputSummary({ report, findings, checks, sheet, comments, revis
   const byKind = new Map();
   for (const finding of findings) if (finding.kind !== 'formatting-summary') byKind.set(finding.kind, (byKind.get(finding.kind) ?? 0) + 1);
   const flagged = [...byKind].map(([kind, count]) => `${kindLabel(kind)}: ${plural(count, 'place', 'places')}.`);
-  if (reading) flagged.push(`The reading check read the opening of ${plural(reading.chapters, 'chapter', 'chapters')} and proposed ${plural(reading.found, 'query', 'queries')} whose quoted words it found in the text; each is a comment marked as a model's proposal, for you to judge.`);
+  if (reading) flagged.push(`The reading check read the opening of ${plural(reading.chapters, 'chapter', 'chapters')}${reading.matter ? ' and the front matter' : ''} and proposed ${plural(reading.found, 'query', 'queries')} whose quoted words it found in the text; each is a comment marked as a model's proposal, for you to judge.`);
   const supply = toSupply(sheet, findings, checks).map(rule => rule.statement);
   const notes = [];
   const conflicts = new Set((sheet?.rules ?? []).filter(rule => rule.conflict === true && rule.enabled !== false).map(rule => rule.slot)).size;
   if (conflicts) notes.push(`${plural(conflicts, 'setting in the rule sheet has', 'settings in the rule sheet have')} rules that disagree, so ${conflicts === 1 ? 'it was' : 'they were'} not applied. Choose one rule in each case in step 3 and format again.`);
   if (unplaced) notes.push(`${plural(unplaced, 'comment', 'comments')} could not be placed at ${unplaced === 1 ? 'its' : 'their'} paragraph and ${unplaced === 1 ? 'is' : 'are'} at the start of the file instead.`);
-  if (reading?.failed) notes.push(`The reading check could not read ${plural(reading.failed, 'chapter', 'chapters')} (the model service did not answer), so ${reading.failed === 1 ? 'that chapter has' : 'those chapters have'} no queries from it. Format again to try once more.`);
+  if (reading?.failed) notes.push(`The reading check could not read ${plural(reading.failed, 'part', 'parts')} of the text (${reading.outOfRoom ? 'the model\'s answer ran out of room, even when the part was read in two halves' : 'the model service did not answer'}), so ${reading.failed === 1 ? 'that part has' : 'those parts have'} no queries from it, or only some. Format again to try once more.`);
   if (titles === 'failed') notes.push('Running titles could not be proposed (the model service did not answer), so the running titles document is a template to fill in. Format again to try once more.');
   else if (titles === 'proposed' && running?.dropped?.length) notes.push(`${plural(running.dropped.length, 'proposed running title was', 'proposed running titles were')} left out because ${running.dropped.length === 1 ? 'it' : 'they'} could not be used (too long, or with words the title does not have); ${running.dropped.length === 1 ? 'that chapter is' : 'those chapters are'} left blank to fill in.`);
   return {

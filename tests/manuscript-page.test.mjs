@@ -251,7 +251,9 @@ test('the reading check runs only when chosen, states its calls first, and its v
   assert.notEqual(outputBasis({ sheet: SHEET, roles: GOLD, reading: true }), outputBasis({ sheet: SHEET, roles: GOLD }), 'choosing the reading check makes earlier files out of date');
   const failed = await buildOutputs({ bytes, paragraphs, roles: GOLD, sheet: SHEET, name: 'b.docx', readText: async () => { throw { code: 'upstream_timeout', retry: false }; } });
   assert.equal(failed.ok, true, 'files are still offered');
-  assert.match(failed.summary.notes.join(' '), /The reading check could not read/);
+  assert.match(failed.summary.notes.join(' '), /The reading check could not read \d+ parts? of the text \(the model service did not answer\)/);
+  const roomless = await buildOutputs({ bytes, paragraphs, roles: GOLD, sheet: SHEET, name: 'b.docx', readText: async () => { throw { code: 'model_output_limit', retry: false }; } });
+  assert.match(roomless.summary.notes.join(' '), /ran out of room, even when the part was read in two halves/);
   for (const line of [...result.summary.flagged, ...failed.summary.notes]) assert.doesNotMatch(line, JARGON);
 });
 
