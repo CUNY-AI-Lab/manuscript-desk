@@ -121,3 +121,23 @@ export function volume() {
   });
   return { bytes, roles, sheet: volumeSheet(), count: list.length, at };
 }
+
+/** A scripted model for the decide step's units: the settings stay, every running-text query goes to
+ * the copyeditor, a title change is proposed first (and must be refused), and the rules are triaged. */
+export function scriptedModel(log = []) {
+  return async ({ kind, reading, messages }) => {
+    log.push({ kind, reading });
+    const text = messages[0].content;
+    const tool = (name, args) => ({ message: { content: '', tool_calls: [{ id: `${name}-${messages.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } });
+    if (kind === 'settings') return tool('clear_settings', { items: [] });
+    if (kind === 'findings') {
+      if (messages.length === 1) return { message: { content: '', tool_calls: [{ id: 'p', type: 'function', function: { name: 'propose_edit', arguments: JSON.stringify({ paragraph: 13, before: 'Why We Read Lanterns', after: 'Why We Read: Lanterns', reason: 'divide the title' }) } }] } };
+      return tool('decide_findings', { items: [...text.matchAll(/^(F\d+) /gmu)].map(match => ({ id: match[1], choice: 'copyedit' })) });
+    }
+    const ids = [...text.matchAll(/^([a-z0-9-]+) \((?:to supply|flag|fix)/gmu)].map(match => match[1]);
+    return tool('triage_rules', { items: ids.map(id => (/image|permission|cover/iu.test(text.split('\n').find(line => line.startsWith(`${id} `))) ? { id, status: 'deliver', deliverable: /permission/iu.test(text.split('\n').find(line => line.startsWith(`${id} `))) ? 'permissions' : 'image-files' } : { id, status: 'decision', question: 'Does the volume need this?' })) });
+  };
+}
+/** A scripted reading check: one typing slip in chapter 1's running text. */
+export const scriptedReading = async ({ unit }) => JSON.stringify({ findings: unit.includes('tehm') ? [{ kind: 'typo', paragraph: 23, quote: 'Bells ring tehm out', note: 'Perhaps “them”.' }] : [] });
+

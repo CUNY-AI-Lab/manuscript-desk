@@ -156,7 +156,7 @@ test('findings become comments and To-dos marked as a model\'s proposal, quoting
     { kind: 'wording-inconsistent', paragraph: 4, quote: 'follows four ports of the western sea', other: { paragraph: 1, quote: 'Three Ports of the Western Sea' }, note: 'The abstract says four ports, the title three.' },
   ]), UNIT).findings.map(finding => ({ ...finding, chapter: 0 }));
   const findings = readingFindings(found);
-  assert.deepEqual(findings.map(({ message, ...rest }) => rest), [{ kind: 'wording-inconsistent', chapter: 0, paragraphIndex: 4, ruleId: null, check: 'reading' }]);
+  assert.deepEqual(findings.map(({ message, ...rest }) => rest), [{ kind: 'wording-inconsistent', chapter: 0, paragraphIndex: 4, ruleId: null, check: 'reading', other: { paragraph: 1 } }], 'the other place is kept, so the decide step knows whether both are running text');
   assert.match(findings[0].message, /^Query from a model's reading of the text, for you to check: The abstract says four ports, the title three\.\nHere: “follows four ports of the western sea”\nElsewhere: “Three Ports of the Western Sea”$/);
   const comments = commentsFor(findings, SHEET);
   assert.deepEqual(comments.map(comment => comment.sourceIndex), [4]);

@@ -18,8 +18,12 @@ import { ruleWith } from '../../lib/checks/rules.js';
 import { changeLines } from '../../lib/checks/summary.js';
 import { companionDocuments } from '../../lib/todos/companions.js';
 import { proposeRunningTitles } from '../../lib/todos/running.js';
-import { fullTitle, kindLabel } from '../../lib/todos/shared.js';
+import { chapterName, fullTitle, kindLabel } from '../../lib/todos/shared.js';
 import { commentsFor, todosDocument, toSupply } from '../../lib/todos/todos.js';
+import { abstractsDocument, altTextsDocument, ruleStatuses, runningTitlesDocument } from '../../lib/todos/companions.js';
+import { SETTLING_DEFAULTS, withDefaults } from '../../lib/decide/defaults.js';
+import { askModel, decidePlan, disposeFindings, planDecisions, preparedSheet, triageRules } from '../../lib/decide/run.js';
+import { COPYEDIT_NAME, DID_NAME, copyeditDocument, decideChecklist, decideComments, formatterLines, summaryComment, whatWeDidDocument } from '../../lib/decide/outputs.js';
 
 const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 const GENERAL_FAILURE = 'The manuscript could not be formatted. Try again; if it happens again, open the file in Word, save it as a new .docx file and choose that one.';
@@ -32,7 +36,10 @@ const COMPANION_LABELS = {
   'Running Titles (proposals)': 'Running titles, with proposals to check',
   'Running Titles (template)': 'Running titles: a template to fill in',
   Checklist: 'Checklist of every requirement in the rule sheet, with its status',
+  [COPYEDIT_NAME]: 'Queries for the copyeditor: possible slips in the running text, by chapter, not marked in the manuscript',
+  [DID_NAME]: 'What we did: the changes, the defaults, what is left for you and why, and every rule of the guidelines',
 };
+const DECIDED_CHECKLIST = 'Checklist: what you need to decide and what to hand in';
 
 /** The rule that asks for running titles, or null: only then is the model asked to propose them. */
 export const runningTitlesRule = sheet => ruleWith(sheet, { slot: 'running-title.length' });
@@ -55,7 +62,19 @@ export function baseName(name) {
 }
 
 /** A fingerprint of what a result was made from, so the page can tell when it is out of date. */
-export const outputBasis = ({ sheet, roles, reading = false }) => JSON.stringify({ rules: sheet?.rules ?? [], docType: sheet?.docType ?? null, roles, reading });
+export const outputBasis = ({ sheet, roles, reading = false, decide = false }) => JSON.stringify({ rules: sheet?.rules ?? [], docType: sheet?.docType ?? null, roles, reading, decide });
+
+/**
+ * What the decide step will take, said before it starts: model calls and minutes, roughly.
+ * Zero calls without labels.
+ */
+export function decideEstimate({ paragraphs, roles, sheet }) {
+  if (!Array.isArray(paragraphs) || !roles || !sheet) return { calls: 0, minutes: 0 };
+  const { chapters } = planFormatting(paragraphs, roles, settingsFrom(sheet));
+  const units = readingUnits({ paragraphs, roles, chapters, sheet }).length;
+  const open = (sheet.rules ?? []).filter(rule => rule.enabled !== false && rule.slot === null).length;
+  return decidePlan({ chapters: chapters.length, openRules: open, readingUnits: units });
+}
 
 /**
  * @param {{ bytes: Uint8Array, paragraphs: Array<object>, roles: Record<number, string>, sheet: object,
@@ -65,7 +84,8 @@ export const outputBasis = ({ sheet, roles, reading = false }) => JSON.stringify
  * @returns {Promise<{ ok: true, files: Array<{ id: string, label: string, name: string, bytes: Uint8Array }>, summary: object }
  *   | { ok: false, message: string }>}
  */
-export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, proposeTitles, readText, onReading, date }) {
+export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, proposeTitles, readText, onReading, date, decide, onDecide }) {
+  if (typeof decide === 'function') return buildDecidedOutputs({ bytes, paragraphs, roles, sheet, name, proposeTitles, readText, onReading, date, decide, onDecide });
   const formatted = formatDocx({ bytes, roles, sheet, ...(date ? { date } : {}) });
   if (!formatted.ok) return { ok: false, message: formatted.message ? `${formatted.message} Nothing was formatted.` : GENERAL_FAILURE };
   const { report } = formatted;
@@ -181,3 +201,139 @@ export function afterFormat(previous, result, basis) {
 /** Whether files on the page were made from what the page now holds. */
 export const isStale = (output, basis) => Boolean(output) && output.basis !== basis;
 export const STALE = 'The rule sheet or the labels changed after these files were made. Format the manuscript again to include the changes.';
+
+const SETTLED_WORDS = settled => SETTLING_DEFAULTS.filter(entry => settled.some(finding => finding.disposition?.by === entry.id)).map(entry => entry.words);
+const readingSummary = (units, result, kept) => ({ chapters: units.filter(unit => unit.chapter !== null).length, matter: units.some(unit => unit.chapter === null), failed: result.failures.length,
+  outOfRoom: result.failures.length > 0 && result.failures.every(failure => failure.code === 'model_output_limit'), found: kept.length });
+
+/**
+ * Formatting with the decide step (the default on the page): the pipeline, the reading check, then
+ * the decide step's operations, defaults and decisions (lib/decide/), the formatter again with them,
+ * and what the author receives: the file with a summary comment and only the real questions, the
+ * copyeditor's list, "What we did" and the checklist of decisions and things to hand in.
+ * `decide` is the model call of one unit (POST /api/decide); `onDecide` gets its progress.
+ */
+export async function buildDecidedOutputs({ bytes, paragraphs, roles, sheet, name, proposeTitles, readText, onReading, date, decide, onDecide, signal }) {
+  const base = preparedSheet(sheet);
+  const first = withDefaults(base);
+  const formatted0 = formatDocx({ bytes, roles, sheet: first.sheet, ...(date ? { date } : {}) });
+  if (!formatted0.ok) return { ok: false, message: formatted0.message ? `${formatted0.message} Nothing was formatted.` : GENERAL_FAILURE };
+  let findings0, checks0;
+  try {
+    ({ findings: findings0, checks: checks0 } = runChecks({ paragraphs, roles, report: formatted0.report, sheet: first.sheet, accessibility: readAccessibility(formatted0.bytes) }));
+  } catch {
+    return { ok: false, message: GENERAL_FAILURE };
+  }
+  // The reading check, which the decide step needs: its queries are questions or the copyeditor's.
+  let reading = null;
+  let readingFound = [];
+  if (typeof readText === 'function') {
+    const units = readingUnits({ paragraphs, roles, chapters: formatted0.report.chapters, sheet: first.sheet });
+    try {
+      const result = await readChapters({ units, model: null, call: readText, onProgress: onReading });
+      readingFound = readingFindings(withoutRepeats(result.findings, findings0));
+      reading = readingSummary(units, result, readingFound);
+    } catch {
+      reading = { chapters: units.filter(unit => unit.chapter !== null).length, matter: units.some(unit => unit.chapter === null), failed: units.length, found: 0 };
+    }
+  }
+  const pipelineFindings = [...findings0, ...readingFound].sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1));
+  const statuses0 = ruleStatuses({ sheet: first.sheet, report: formatted0.report, findings: pipelineFindings, checks: checks0 });
+  const made = ['the formatted manuscript', COPYEDIT_NAME, DID_NAME, 'a checklist', ...(ruleWith(first.sheet, { category: 'abstract-keywords' }) ? ['an abstracts-and-keywords document'] : []), ...(runningTitlesRule(first.sheet) ? ['running titles'] : []), 'an alt-text template when there are figures'];
+  let answers;
+  try {
+    answers = await askModel({ paragraphs, roles, sheet: first.sheet, report: formatted0.report, findings: pipelineFindings, statuses: statuses0, made, call: decide, signal, onProgress: onDecide });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return { ok: false, message: GENERAL_FAILURE };
+  }
+  const plan = planDecisions({ paragraphs, roles, sheet: first.sheet, answers });
+  const finalSheet = withDefaults(preparedSheet(base, plan.cleared), { ignore: new Set(plan.cleared.keys()) });
+  const formatted = formatDocx({ bytes, roles: plan.roles, sheet: finalSheet.sheet, edits: plan.edits, ...(date ? { date } : {}) });
+  if (!formatted.ok) return { ok: false, message: GENERAL_FAILURE };
+  const { report } = formatted;
+  const accessibility = readAccessibility(formatted.bytes);
+  let final;
+  try {
+    final = runChecks({ paragraphs, roles: plan.roles, report, sheet: finalSheet.sheet, accessibility });
+  } catch {
+    return { ok: false, message: GENERAL_FAILURE };
+  }
+  const disposed = disposeFindings({ roles, answers, plan, finalFindings: final.findings, edits: report.edits });
+  const everything = [...disposed.asked, ...disposed.resolved, ...disposed.settled, ...disposed.copyedit, ...disposed.flagged];
+  const statuses = ruleStatuses({ sheet: finalSheet.sheet, report, findings: everything, checks: final.checks });
+  const triage = triageRules({ statuses, answers, asked: disposed.asked, settled: disposed.settled });
+  const decisions = disposed.asked.length + plan.extraQuestions.length;
+  const copyeditCount = disposed.copyedit.length + plan.extraCopyedit.length;
+  const summaryText = summaryComment({ applied: disposed.applied, report, defaults: finalSheet.applied, settled: disposed.settled, decisions, copyedit: copyeditCount, refusals: plan.refusals.length });
+  const chapters = report.chapters ?? [];
+  const { comments, places } = decideComments({ summary: summaryText, asked: disposed.asked, flagged: disposed.flagged, copyedit: disposed.copyedit, extraQuestions: plan.extraQuestions, applied: disposed.applied, chapters, paragraphs, sheet: finalSheet.sheet });
+  const commented = addComments(formatted.bytes, { map: report.map, comments, ...(date ? { date } : {}) });
+  if (!commented.ok) return { ok: false, message: GENERAL_FAILURE };
+  const validity = validateDocx(commented.bytes);
+  if (!validity.ok) return { ok: false, message: NOT_VALID };
+
+  let running = null;
+  let titles = 'not asked';
+  const rule = runningTitlesRule(finalSheet.sheet);
+  if (rule && typeof proposeTitles === 'function' && chapters.length) {
+    try {
+      running = await proposeRunningTitles({ chapters: chapters.map(chapter => ({ first: chapter.first, title: fullTitle(chapter, paragraphs) })), max: rule.params.max, call: proposeTitles });
+      titles = 'proposed';
+    } catch {
+      titles = 'failed';
+    }
+  }
+  const input = { sheet: finalSheet.sheet, report, paragraphs, roles: plan.roles, findings: everything, checks: final.checks, accessibility, proposals: running?.proposals ?? new Map() };
+  const copyeditRules = triage.filter(entry => entry.end === 'copyedit').map(entry => entry.rule);
+  const copyedit = copyeditDocument({ copyedit: disposed.copyedit, extraCopyedit: plan.extraCopyedit, rules: copyeditRules, chapters, paragraphs });
+  const did = whatWeDidDocument({ applied: disposed.applied, report, defaults: finalSheet.applied, settled: disposed.settled, cleared: plan.cleared, sheet: finalSheet.sheet, roleChanges: plan.roleChanges, refusals: plan.refusals, asked: disposed.asked, copyeditCount, triage, chapters, paragraphs });
+  const checklist = decideChecklist({ triage });
+  const base_ = baseName(name);
+  const others = [abstractsDocument(input), altTextsDocument(input), runningTitlesDocument(input)].filter(Boolean);
+  const files = [
+    { id: 'manuscript', label: 'The formatted manuscript: the changes as tracked changes, a summary at the top, and a comment at each thing you need to decide', name: `${base_} (formatted).docx`, bytes: commented.bytes },
+    { id: 'checklist', label: DECIDED_CHECKLIST, name: `${base_} Checklist.docx`, bytes: checklist.bytes },
+    { id: 'what-we-did', label: COMPANION_LABELS[DID_NAME], name: `${base_} ${DID_NAME}.docx`, bytes: did.bytes },
+    { id: 'copyedit', label: COMPANION_LABELS[COPYEDIT_NAME], name: `${base_} ${COPYEDIT_NAME}.docx`, bytes: copyedit.bytes },
+    ...others.map(companion => ({ id: companion.name.toLowerCase().replace(/[^a-z]+/gu, '-').replace(/^-|-$/gu, ''), label: COMPANION_LABELS[companion.name] ?? companion.name, name: `${base_} ${companion.name}.docx`, bytes: companion.bytes })),
+  ];
+  if (files.slice(1).some(file => !validateDocx(file.bytes).ok)) return { ok: false, message: NOT_VALID };
+  const failedUnits = Object.entries(answers.stats.stopped).filter(([stopped]) => !['finished', 'turns', 'no_tool_call'].includes(stopped)).reduce((sum, [, count]) => sum + count, 0);
+  return {
+    ok: true,
+    files,
+    summary: decidedSummary({ report, applied: disposed.applied, defaults: finalSheet.applied, settled: disposed.settled, asked: disposed.asked, extraQuestions: plan.extraQuestions, chapters, paragraphs, copyeditCount, checklist, comments: validity.counts.comments, revisions: validity.counts.revisions, reading, failedUnits, titles, running }),
+    measures: { comments: validity.counts.comments, places, questions: decisions, copyedit: copyeditCount, checklistRows: checklist.rows, triage, disposed, plan, answers, report, defaults: finalSheet.applied, finalSheet: finalSheet.sheet, statuses0, pipeline: { findings: pipelineFindings.length, report: formatted0.report } },
+  };
+}
+
+/** The page's summary after the decide step, in plain words. */
+export function decidedSummary({ report, applied, defaults, settled, asked, extraQuestions, chapters, paragraphs, copyeditCount, checklist, comments, revisions, reading, failedUnits = 0, titles = 'not asked', running = null }) {
+  const styled = Object.values(report.styles ?? {}).reduce((sum, count) => sum + count, 0);
+  const changed = [
+    ...applied.map(op => `${op.words.charAt(0).toUpperCase()}${op.words.slice(1)}.`),
+    `${plural(styled, 'paragraph was', 'paragraphs were')} given a named style for what ${styled === 1 ? 'it is' : 'they are'}.`,
+    ...formatterLines(report).map(line => `${line.charAt(0).toUpperCase()}${line.slice(1)}.`),
+  ];
+  if (revisions) changed.push(`${plural(revisions, 'change to words is', 'changes to words are')} marked as tracked changes, for you to accept or reject in Word.`);
+  const where = index => { const at = (chapters ?? []).findIndex(chapter => index >= chapter.first && index <= chapter.last); return at >= 0 ? chapterName(chapters[at], paragraphs) : 'Front and back matter'; };
+  const decide = [...asked, ...extraQuestions.map(proposal => ({ kind: 'proposed-change', paragraphIndex: proposal.paragraphIndex }))]
+    .sort((a, b) => (a.paragraphIndex ?? -1) - (b.paragraphIndex ?? -1))
+    .map(finding => `${finding.kind === 'proposed-change' ? 'A change only you can decide' : kindLabel(finding.kind)} (${Number.isInteger(finding.paragraphIndex) ? where(finding.paragraphIndex) : 'the whole manuscript'}).`);
+  const used = [...defaults.map(entry => entry.words), ...SETTLED_WORDS(settled)];
+  const notes = [];
+  if (reading?.failed) notes.push(`The reading check could not read ${plural(reading.failed, 'part', 'parts')} of the text, so ${reading.failed === 1 ? 'that part has' : 'those parts have'} no queries from it. Format again to try once more.`);
+  if (failedUnits) notes.push(`The model service did not answer for ${plural(failedUnits, 'part', 'parts')} of the decide step, so what ${failedUnits === 1 ? 'it' : 'they'} held stayed a question for you. Format again to try once more.`);
+  if (titles === 'failed') notes.push('Running titles could not be proposed (the model service did not answer), so the running titles document is a template to fill in.');
+  else if (titles === 'proposed' && running?.dropped?.length) notes.push(`${plural(running.dropped.length, 'proposed running title was', 'proposed running titles were')} left out because ${running.dropped.length === 1 ? 'it' : 'they'} could not be used; ${running.dropped.length === 1 ? 'that chapter is' : 'those chapters are'} left blank to fill in.`);
+  return {
+    headline: `Formatted. You need to decide ${plural(decide.length, 'thing', 'things')}; ${plural(checklist.rows, 'item is', 'items are')} on the checklist.`,
+    changed,
+    decide: decide.length ? decide : ['Nothing in the text needs a decision from you.'],
+    defaults: used.length ? used.map(line => `${line.charAt(0).toUpperCase()}${line.slice(1)}.`) : ['None: the guidelines say how to set everything the tool sets.'],
+    copyedit: copyeditCount ? `${plural(copyeditCount, 'possible slip', 'possible slips')} in the running text ${copyeditCount === 1 ? 'is' : 'are'} in “${COPYEDIT_NAME}”, for the copyeditor; they are not marked in the manuscript.` : 'Nothing was noticed for the copyeditor.',
+    notes,
+    counts: { comments, revisions, decide: decide.length, checklist: checklist.rows, copyedit: copyeditCount, styled },
+  };
+}

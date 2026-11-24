@@ -5,6 +5,8 @@ import { MAX_UNREPORTED, MAX_UNREPORTED_CHARS } from '../lib/rules/extract.js';
 import { modelControls } from './model.js';
 import { GROUPS, readingPayload, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
 import { judgePayload, rangesPayload, termsPayload } from './index-prompts.js';
+import { checkedMessages, decidePayload } from './decide-prompts.js';
+import { UNIT_KINDS } from '../lib/decide/tools.js';
 import { JUDGE_TASKS } from '../lib/index/judge.js';
 import { MODEL, UNAVAILABLE } from '../lib/calls/model.js';
 
@@ -153,6 +155,24 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
     if (typeof content !== 'string' || !content.trim()) throw new AppError('invalid_model_response', 'The model returned an empty answer. Try again.', 502);
     return content;
   }
+  // One reply of the decide step: its text and its tool calls (names and JSON arguments only), or
+  // an AppError like modelContent's. A reply with neither is empty.
+  async function modelMessage(payload, credential, signal, requestId, lengthMessage) {
+    const correlation = { request_id: requestId, trace_id: crypto.randomUUID().replaceAll('-', ''), span_id: crypto.randomUUID().replaceAll('-', '').slice(0, 16), trace_flags: 0 };
+    const response = await client.chatCompletions(payload, credential, { signal, correlation });
+    let data;
+    try { data = JSON.parse(await boundedText(response)); } catch (error) { if (error instanceof AppError) throw error; throw new AppError('invalid_model_response', 'The model returned a response this tool could not read. Try again.', 502); }
+    const choice = data?.choices?.[0];
+    if (choice?.finish_reason === 'length') throw new AppError('model_output_limit', lengthMessage, 502);
+    const message = choice?.message ?? {};
+    const content = typeof message.content === 'string' ? message.content : '';
+    const calls = (Array.isArray(message.tool_calls) ? message.tool_calls : [])
+      .filter(call => typeof call?.function?.name === 'string' && typeof call.function.arguments === 'string')
+      .slice(0, 12)
+      .map((call, at) => ({ id: typeof call.id === 'string' && call.id.length <= 120 ? call.id : `call-${at + 1}`, type: 'function', function: { name: call.function.name.slice(0, 64), arguments: call.function.arguments.slice(0, 20000) } }));
+    if (!content.trim() && !calls.length) throw new AppError('invalid_model_response', 'The model returned an empty answer. Try again.', 502);
+    return { content, ...(calls.length ? { tool_calls: calls } : {}) };
+  }
   return async function handle(request, env) {
     if (env?.GATEWAY && typeof env.GATEWAY.fetch === 'function') binding = env.GATEWAY;
     const url = new URL(request.url);
@@ -242,6 +262,18 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         const payload = readingPayload({ model, unit: body.unit, row: await catalogRow(model, signal) });
         const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this chapter. Try again.');
         return json({ content, request_id: requestId });
+      }
+      // The decide step: one turn of one unit. The conversation (manuscript and guideline text) is
+      // never echoed in an error, logged or stored.
+      if (path === '/api/decide' && request.method === 'POST') {
+        const body = await bodyJSON(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
+        if (!UNIT_KINDS.includes(body.kind) || typeof body.reading !== 'boolean') throw new AppError('invalid_request', 'The request named a part of the work this tool does not do. Reload the page and try again.');
+        const messages = checkedMessages(body.messages);
+        if (!messages) throw new AppError('invalid_request', 'The request held a conversation this tool cannot send. Reload the page and try again.');
+        const payload = decidePayload({ model: fixedModel, kind: body.kind, reading: body.reading, messages, row: await catalogRow(fixedModel, signal) });
+        const message = await modelMessage(payload, credential, signal, requestId, 'The model ran out of room before it finished this part of the work. Try again.');
+        return json({ message, request_id: requestId });
       }
       // The Index Builder. The passage, the hits and the page openings are never echoed in an error,
       // logged or stored.

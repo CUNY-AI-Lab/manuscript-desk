@@ -17,6 +17,7 @@ import { RULES, manuscript, sheetWith } from '../manuscript-fixture.mjs';
 import { dissertation } from '../dissertation-fixture.mjs';
 import { presetSheet } from '../../lib/presets/index.js';
 import { dropFiles, dropStray } from './drop-files.mjs';
+import { scriptedModel } from '../decide-fixture.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 const { chromium } = playwright.default ?? playwright;
@@ -526,14 +527,31 @@ try {
   await page7.getByLabel('Show').selectOption('check');
   log('step 5: one call labelled the paragraphs; the review shows what is not body text by chapter, with the warning, counts, neighbours and an "everything" filter; one label corrected');
 
+  // Step 6 with the decide step, on by default: the page says how long it takes, reads each
+  // chapter's opening, sends the units to /api/decide (answered by the scripted model the unit tests
+  // use), and hands back the manuscript, the checklist, "What we did" and the copyeditor's list.
+  assert.equal(await page7.getByLabel('Do the work the guidelines settle and ask me only the real decisions (recommended)').isChecked(), true, 'on by default');
+  assert.match(await page7.locator('#decide-plan').textContent(), /^This takes about (a minute|\d+ minutes) and some \d+ model calls/);
+  const decideCalls = [];
+  const scripted = scriptedModel();
+  await context7.route('**/manuscript/api/decide', async route => {
+    const body = JSON.parse(route.request().postData());
+    decideCalls.push(body);
+    return json(route, { request_id: 'r', ...(await scripted(body)) });
+  });
   await page7.getByRole('button', { name: 'Format the manuscript' }).click();
-  await page7.locator('#output .downloads button').first().waitFor();
+  await page7.locator('#output .downloads button').first().waitFor({ timeout: 60000 });
   assert.equal(titleCalls.length, 1, 'running titles asked once, because a rule asks for them');
+  assert.equal(readingCalls.length, 2, 'the opening of each chapter is read');
+  assert.equal(readingCalls[0].model, undefined, 'the page names no model');
+  assert.ok(decideCalls.length >= 1 && decideCalls.every(call => ['settings', 'findings', 'rules'].includes(call.kind) && Array.isArray(call.messages) && call.model === undefined), 'the decide step\'s units went to /api/decide');
   const corrected = { ...Object.fromEntries(Object.keys(GOLD).concat(paragraphs.filter(entry => entry.text.trim()).map(entry => String(entry.index))).map(index => [index, GOLD[index] ?? 'body'])) };
-  const expected = await buildOutputs({ bytes: source, paragraphs, roles: corrected, sheet: sheet7, name: 'manuscript.docx', proposeTitles: async () => TITLES });
+  const readingReply = unit => { const [, index, text] = /^\[(\d+)\] \([^)]*\) (.{12,})$/mu.exec(unit); return JSON.stringify({ findings: [{ kind: 'typo', paragraph: Number(index), quote: text.split(' ').slice(0, 4).join(' '), note: 'Check this <b>word</b>.' }, { kind: 'typo', paragraph: Number(index), quote: 'words the chapter does not have', note: 'Invented.' }] }); };
+  const expected = await buildOutputs({ bytes: source, paragraphs, roles: corrected, sheet: sheet7, name: 'manuscript.docx', proposeTitles: async () => TITLES, readText: async ({ unit }) => readingReply(unit), decide: scriptedModel() });
   assert.equal(expected.ok, true);
   const buttons = page7.locator('#output .downloads button');
   assert.deepEqual(await buttons.allTextContents(), expected.files.map(file => `Download ${file.name}`));
+  assert.deepEqual(expected.files.slice(0, 4).map(file => file.id), ['manuscript', 'checklist', 'what-we-did', 'copyedit']);
   for (let at = 0; at < expected.files.length; at += 1) {
     const [file] = await Promise.all([page7.waitForEvent('download'), buttons.nth(at).click()]);
     assert.equal(file.suggestedFilename(), expected.files[at].name);
@@ -544,25 +562,30 @@ try {
     assert.equal(validity.ok, true, `${file.suggestedFilename()} passes the structural validator`);
     if (expected.files[at].id === 'manuscript') {
       assert.equal(validity.counts.comments, validateDocx(expected.files[at].bytes).counts.comments);
-      assert.ok(validity.counts.comments > 1 && validity.counts.revisions > 0);
+      assert.ok(validity.counts.comments >= 1 && validity.counts.revisions > 0);
     }
   }
-  assert.match(await page7.locator('#output-status').textContent(), /^Formatted\. \d+ comments in the file/);
+  assert.match(await page7.locator('#output-status').textContent(), /^Formatted\. You need to decide \d+ things?; \d+ items? (is|are) on the checklist\.$/);
   assert.ok((await page7.locator('#summary-changed + ul li').count()) > 3);
-  log(`step 6: formatted in the page; ${expected.files.length} downloads (${expected.files.map(file => file.id).join(', ')}), each a valid Word file; the manuscript has the expected ${validateDocx(expected.files[0].bytes).counts.comments} comments`);
+  assert.match(await page7.locator('#summary-decide').textContent(), /^You need to decide (this thing|these \d+ things)$/);
+  assert.ok((await page7.locator('#summary-defaults + ul li').count()) >= 1, 'the defaults are listed');
+  assert.match(await page7.locator('#summary-copyedit + ul').textContent(), /copyeditor/, 'the queries on a title are questions, not the copyeditor\'s');
+  assert.equal(await page7.locator('#summary-decide + ul b').count(), 0, 'model text is never parsed as HTML');
+  log(`step 6 with the decide step (on by default, its time said first): ${readingCalls.length} reading calls and ${decideCalls.length} decide calls; ${expected.files.length} downloads (${expected.files.map(file => file.id).join(', ')}), each a valid Word file; the summary says what we did, what to decide, the defaults and the copyeditor's list`);
 
-  assert.equal(readingCalls.length, 0, 'the reading check is not run unless chosen');
-  assert.match(await page7.locator('#reading-plan').textContent(), /^Optional, 2 model calls, one per chapter/);
-  const itemsBefore = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
-  await page7.getByLabel('Also read the opening of each chapter, and the front matter, for queries an editor would make').check();
+  // Unticked: format only, with a comment for every finding and the To-dos list, and no model call.
+  const readingBefore = readingCalls.length;
+  const decideBefore = decideCalls.length;
+  await page7.getByLabel('Do the work the guidelines settle and ask me only the real decisions (recommended)').uncheck();
   await page7.locator('#output-stale').waitFor();
   await page7.getByRole('button', { name: 'Format the manuscript' }).click();
-  await page7.locator('#summary-flagged + ul li', { hasText: 'The reading check read the opening of 2 chapters and proposed 2 queries' }).waitFor();
-  assert.equal(readingCalls.length, 2);
-  assert.equal(readingCalls[0].model, undefined, 'the page names no model');
-  const itemsAfter = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
-  assert.equal(itemsAfter, itemsBefore + 2, 'the two verified queries are To-dos; the invented one is dropped');
-  log('step 6: the reading check states its 2 calls, runs only when ticked, and adds only the queries whose quotation is in the text');
+  await page7.locator('#summary-flagged').waitFor();
+  assert.match(await page7.locator('#output-status').textContent(), /^Formatted\. \d+ comments in the file/);
+  assert.equal(readingCalls.length, readingBefore);
+  assert.equal(decideCalls.length, decideBefore);
+  const plain = await buildOutputs({ bytes: source, paragraphs, roles: corrected, sheet: sheet7, name: 'manuscript.docx', proposeTitles: async () => TITLES });
+  assert.deepEqual(await buttons.allTextContents(), plain.files.map(file => `Download ${file.name}`));
+  log('step 6 unticked: formats only, with the To-dos list, and calls no model but the running titles');
 
   await page7.reload();
   await page7.locator('#file-notice', { hasText: 'Labels for manuscript.docx are kept in this browser' }).waitFor();
@@ -621,6 +644,9 @@ try {
     const body = JSON.parse(route.request().postData());
     return json(route, { request_id: 'r', content: JSON.stringify({ roles: Object.fromEntries(labelLines(body.passage).map(index => [index, ROLES_D[index] ?? 'body'])) }) });
   });
+  await contextD.route('**/manuscript/api/reading', route => json(route, { request_id: 'r', content: '{"findings":[]}' }));
+  const scriptedD = scriptedModel();
+  await contextD.route('**/manuscript/api/decide', async route => json(route, { request_id: 'r', ...(await scriptedD(JSON.parse(route.request().postData()))) }));
   const pageD = await contextD.newPage();
   watch(pageD);
   await pageD.goto(pageUrl);
@@ -657,9 +683,10 @@ try {
     await file.saveAs(path);
     assert.equal(validateDocx(new Uint8Array(await readFile(path))).ok, true, `${file.suggestedFilename()} passes the structural validator`);
   }
-  assert.match(await pageD.locator('#output').textContent(), /Accessibility: 8 places \(4 must fix, 3 should fix, 1 to check\)/u);
+  assert.match(await pageD.locator('#summary-decide + ul').textContent(), /Alternative text for pictures/u, 'the accessibility questions are among the decisions');
+  assert.equal(await pageD.locator('#summary-defaults + ul').textContent(), 'None: the guidelines say how to set everything the tool sets.', 'a dissertation gets no defaults: it keeps the built-in set');
   assert.match(await pageD.locator('#output').textContent(), /Alt texts: a template/u);
-  log(`dissertation: formatted in the page with the built-in set; ${countD} downloads, each a valid Word file; the summary counts the accessibility findings`);
+  log(`dissertation: formatted in the page with the built-in set and the decide step; ${countD} downloads, each a valid Word file; the accessibility questions are decisions; no defaults applied`);
   await contextD.close();
 
   // ---- "Delete saved work now" ----
