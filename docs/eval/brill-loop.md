@@ -11,6 +11,10 @@ file holds only counts, accuracies and role names.
 
 For a reader who has not followed the rounds: the current headline numbers, each from the round
 named, then what no person has checked and what is not built. The rounds below hold the detail.
+Since 2026-11-23 the Formatter runs a decide step after this pipeline by default (a contents list
+built from the chapters, repeated-author dashes, title case, defaults, and only the real decisions
+left as comments): its measurements, which supersede the "not built" items on contents lists and
+chapter labels below, are in [`decide-loop.md`](decide-loop.md).
 
 | Measure | Current result | Round |
 |---|---|---|

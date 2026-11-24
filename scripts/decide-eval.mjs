@@ -56,12 +56,16 @@ function createGateway({ folder }) {
   let rows = null;
   let writing = Promise.resolve();
   const meter = { calls: 0, cached: 0, cost: 0, prompt: 0, completion: 0, seconds: 0, refused: 0 };
-  async function load() {
-    if (cache) return;
-    await mkdir(folder, { recursive: true });
-    cache = (await readJson(cacheFile)) ?? {};
-    for (const line of ((await readFile(ledgerFile, 'utf8').catch(() => '')).split('\n').filter(Boolean))) spent += JSON.parse(line).cost ?? 0;
-    rows = (await readCatalog()) ?? new Map();
+  // Once per process, even when calls start together (a second read of the ledger would count it twice).
+  let loading = null;
+  function load() {
+    loading ??= (async () => {
+      await mkdir(folder, { recursive: true });
+      cache = (await readJson(cacheFile)) ?? {};
+      for (const line of ((await readFile(ledgerFile, 'utf8').catch(() => '')).split('\n').filter(Boolean))) spent += JSON.parse(line).cost ?? 0;
+      rows = (await readCatalog()) ?? new Map();
+    })();
+    return loading;
   }
   async function send(payload, { tag, salt }) {
     await load();
