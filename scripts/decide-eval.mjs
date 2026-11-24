@@ -107,7 +107,7 @@ async function loadCase({ name, dissertation }) {
   if (dissertation) {
     const folder = path.join(PRIVATE, '.dissertation-manuscripts', dissertation);
     const labels = await readJson(path.join(folder, 'work', 'roles-r2.json'));
-    return { folder, work: path.join(folder, 'work'), source: new Uint8Array(await readFile(path.join(folder, 'source.docx'))), roles: labels.roles, sheet: presetSheet('cuny-gc'), key: null, hand: null, reference: null };
+    return { folder, work: path.join(folder, 'work'), source: new Uint8Array(await readFile(path.join(folder, 'source.docx'))), roles: labels.structured ?? labels.roles, sheet: presetSheet('cuny-gc'), key: null, hand: null, reference: null };
   }
   const folder = path.join(PRIVATE, 'manuscripts', name);
   const work = path.join(folder, 'work');
@@ -208,7 +208,7 @@ async function appearance({ c, file, out }) {
   const result = await readJson(json);
   const all = result?.paragraphs?.all;
   const pct = property => (all ? Math.round((1000 * (all.agree[property] ?? 0)) / all.pairs) / 10 : null);
-  return { pairs: all?.pairs ?? null, line: pct('line'), indentLeft: pct('indentLeft'), indentFirst: pct('indentFirst'), font: pct('font'), size: pct('size'), chapterPageSetup: result?.sections?.chapters ? `${Math.min(result.sections.chapters.agree.margins, result.sections.chapters.agree.pageNumberOther)}/${result.sections.chapters.count}` : null, pages: result?.pdf ? `${result.pdf.tool.pages} (reference ${result.pdf.reference.pages})` : null };
+  return { pairs: all?.pairs ?? null, line: pct('line'), left: pct('left'), firstLine: pct('firstLine'), before: pct('before'), after: pct('after'), jc: pct('jc'), font: pct('font'), size: pct('size'), chapterPageSetup: result?.sections?.chapters ? `${Math.min(result.sections.chapters.agree.margins, result.sections.chapters.agree.pageNumberOther)}/${result.sections.chapters.count}` : null, pages: result?.pdf ? `${result.pdf.tool.pages} (reference ${result.pdf.reference.pages})` : null };
 }
 
 // ---- The runs ----

@@ -76,3 +76,11 @@ test('an edit on a title the formatter splits at its colon is made on the part i
   assert.equal(check.undeclaredRemoved + check.undeclaredAdded, 0);
   assert.equal(validateDocx(result.bytes).ok, true);
 });
+
+test('a contents field goes in only when a line of the typed list it replaces could be deleted', () => {
+  const insert = { op: 'insert', before: 18, field: 'contents', group: 'contents', lines: [{ text: 'A Title' }], kind: DECLARED.contentsInserted };
+  // Paragraph 18 holds a note, so it cannot be deleted: the field is refused too, and no second list appears.
+  const { result } = run([insert, { op: 'delete', from: 18, to: 18, group: 'contents', kind: DECLARED.contentsReplaced }]);
+  assert.equal(result.report.edits.applied.length, 0);
+  assert.match(result.report.edits.refused.map(entry => entry.reason).join(' | '), /nothing of its group/u);
+});
