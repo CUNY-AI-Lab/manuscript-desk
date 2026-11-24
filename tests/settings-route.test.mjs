@@ -39,7 +39,7 @@ test('the settings prompt lists only the settings asked for, each with its param
 
 test('POST /api/settings sends the settings prompt and the text, and returns the content', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ sent }) });
   const response = await handle(await settingsRequest(body()), env);
   assert.equal(response.status, 200);
   assert.equal((await response.json()).content, REPLY);
@@ -52,10 +52,10 @@ test('POST /api/settings sends the settings prompt and the text, and returns the
 
 test('POST /api/settings refuses unknown, repeated, unoffered or missing settings and bad text', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ sent }) });
   for (const bad of [
     body({ slots: [] }), body({ slots: 'abstract.words' }), body({ slots: ['no.such'] }), body({ slots: ['abstract.words', 'abstract.words'] }),
-    body({ slots: ['chapters.subtitle'] }), body({ docType: 'essay' }), body({ text: '' }), body({ text: 'x'.repeat(60001) }), body({ model: 'bad model' }),
+    body({ slots: ['chapters.subtitle'] }), body({ docType: 'essay' }), body({ text: '' }), body({ text: 'x'.repeat(60001) }),
   ]) {
     const response = await handle(await settingsRequest(bad), env);
     assert.equal(response.status, 400, JSON.stringify(bad).slice(0, 80));
@@ -67,7 +67,7 @@ test('POST /api/settings refuses unknown, repeated, unoffered or missing setting
 
 test('POST /api/settings sends the sentences no reading quoted before the text, with or without settings to ask', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ sent }) });
   const unreported = ['Authors should send a signed form with the manuscript.', 'Please number every page.'];
   for (const slots of [['abstract.words'], []]) {
     const response = await handle(await settingsRequest(body({ slots, unreported })), env);
@@ -94,7 +94,7 @@ test('a list item asked about is shown with the lead-in that introduces its list
 
 test('POST /api/settings refuses sentences that are not a short list of short texts', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ sent }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ sent }) });
   for (const unreported of ['one sentence', [''], [42], ['x'.repeat(601)], Array.from({ length: 31 }, () => 'A sentence.'), Array.from({ length: 12 }, () => 'y'.repeat(550))]) {
     const response = await handle(await settingsRequest(body({ unreported })), env);
     assert.equal(response.status, 400, JSON.stringify(unreported).slice(0, 60));
@@ -104,7 +104,7 @@ test('POST /api/settings refuses sentences that are not a short list of short te
 
 test('a rate-limit refusal from the Gateway reaches the page as retryable, with its Retry-After', async () => {
   const reply = () => cailErrorResponse(429, cailErrorEnvelope({ code: 'upstream_rate_limited', type: 'rate_limit_error', message: 'Too many requests.', cail: { retry_after_seconds: 7 } }), { 'x-should-retry': 'true', 'retry-after': '7' });
-  const handle = createHandler({ gatewayFetch: gateway({ reply }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply }) });
   const response = await handle(await settingsRequest(body()), env);
   assert.equal(response.status, 429);
   assert.equal(response.headers.get('x-should-retry'), 'true');

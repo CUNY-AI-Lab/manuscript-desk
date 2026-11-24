@@ -65,12 +65,14 @@ export function keyedGateway({ key, upstreamFetch }) {
 
 /**
  * Starts the local server on 127.0.0.1. Resolves { server, port, origin, close }.
- * @param {{ port?: number, key?: string, upstreamFetch?: typeof fetch, root?: string, log?: (line: string) => void }} options
+ * `model`: another model for a measurement run with the owner's own key (npm run dev reads it from
+ * MANUSCRIPT_DESK_MODEL); by default the one the deployed Worker uses. The pages never choose it.
+ * @param {{ port?: number, key?: string, upstreamFetch?: typeof fetch, root?: string, log?: (line: string) => void, model?: string }} options
  */
-export async function startDevServer({ port = DEFAULT_PORT, key, upstreamFetch = globalThis.fetch, root = resolve('dist'), log = line => console.log(line) } = {}) {
+export async function startDevServer({ port = DEFAULT_PORT, key, upstreamFetch = globalThis.fetch, root = resolve('dist'), log = line => console.log(line), model } = {}) {
   const identity = await createLocalIdentity();
   const env = { ...identity.env, ASSETS: distAssets(root) };
-  const handle = createHandler({ gatewayFetch: keyedGateway({ key, upstreamFetch }) });
+  const handle = createHandler({ gatewayFetch: keyedGateway({ key, upstreamFetch }), ...(model ? { model } : {}) });
   let localPort;
 
   async function respond(request, response) {

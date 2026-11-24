@@ -19,7 +19,6 @@ import { parseArgs } from 'node:util';
 import { extractRuleSheet } from '../lib/rules/extract.js';
 import { readDocx } from '../lib/docx/read.js';
 import { labelRoles } from '../lib/roles/label.js';
-import { modelMenu } from '../web/shared/models.js';
 import { rolesPayload, settingsPayload, ROLES_OUTPUT_TOKENS, SETTINGS_WITH_SENTENCES_OUTPUT_TOKENS } from '../server/prompts.js';
 import { readCaseFile, rulesPayload, scoreSheet, table } from './generality.mjs';
 import { scoreRoles, selectChapters, spansFor } from './roles-eval.mjs';
@@ -28,6 +27,18 @@ import { TOOLS, createSession } from './spikes/agent/tools.mjs';
 import { AGENT_SYSTEM } from './spikes/agent/prompt.mjs';
 import { probeMessage, probeState, scoreProbe } from './spikes/agent/probe.mjs';
 import { runAgent } from './spikes/agent/loop.mjs';
+
+// The models the Formatter's menu used to offer (the menu is gone: the tool uses one model), kept
+// here so that this measurement can still be run over the same ladder: recommended, active
+// text-generation rows with room for a part of the guidelines plus the reply, in catalog order.
+function modelMenu(catalog) {
+  const offered = row => typeof row?.id === 'string' && row.recommended === true && (row.status === undefined || row.status === 'active')
+    && Array.isArray(row.capabilities) && row.capabilities.includes('text-generation') && Number.isInteger(row.context_length) && row.context_length >= 32000
+    && !/guard|safeguard/i.test(row.id) && !/guard|safeguard/i.test(typeof row.name === 'string' ? row.name : '');
+  const rows = Array.isArray(catalog?.data) ? catalog.data : [];
+  return rows.filter(offered).map((row, index) => ({ row, index })).sort((a, b) => (a.row.order ?? 0) - (b.row.order ?? 0) || a.index - b.index)
+    .map(({ row }) => ({ id: row.id, label: (typeof row.name === 'string' && row.name) || row.id }));
+}
 
 const BASELINE = 'deepseek-v4.1-flash-1017';
 const STAGES = ['answers', 'agent', 'extraction', 'roles'];

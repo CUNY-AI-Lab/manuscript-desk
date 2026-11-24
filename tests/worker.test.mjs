@@ -182,3 +182,37 @@ test('files under vendor/ are served as they are, even without an extension', as
   }
   assert.deepEqual(assets, ['/vendor/mupdf/LICENSE', '/vendor/mupdf/LICENSE', '/vendor/mupdf/VERSION', '/vendor/mupdf/VERSION']);
 });
+
+// One model for every call: the page sends none, and a request's own "model" is never used.
+test('every model route uses the one model, whatever the request names, and says plainly when it is not offered', async () => {
+  const { MODEL, UNAVAILABLE } = await import('../lib/calls/model.js');
+  const { ORIGIN: origin, signed: sign } = await import('./helpers.mjs');
+  const row = id => ({ id, object: 'model', recommended: false, tier: 'advanced', order: 10, status: 'active', modality: 'text', provider: 'workers-ai', upstream_model: id, pricing_known: 'catalog', streaming: true, sunset: null, capabilities: ['text-generation'], context_length: 131000, registry_url: null });
+  const make = rows => {
+    const sent = [];
+    const handle = createHandler({ gatewayFetch: async (url, init) => {
+      if (new URL(url).pathname === '/v1/catalog') return Response.json({ object: 'list', data: rows });
+      sent.push(JSON.parse(init.body));
+      return Response.json({ choices: [{ message: { role: 'assistant', content: '{"roles":[]}' }, finish_reason: 'stop' }] });
+    } });
+    return { handle, sent };
+  };
+  const post = async body => sign('/api/roles', { headers: { origin, 'content-type': 'application/json' } }, { method: 'POST', body: JSON.stringify(body) });
+  const listed = make([row(MODEL), row('glm-5.3')]);
+  for (const body of [{ passage: 'A passage.' }, { model: 'glm-5.3', passage: 'A passage.' }, { model: 'not a model id/', passage: 'A passage.' }]) {
+    assert.equal((await listed.handle(await post(body), env)).status, 200);
+  }
+  assert.deepEqual(listed.sent.map(payload => payload.model), [MODEL, MODEL, MODEL]);
+  const check = await listed.handle(await sign('/api/model'), env);
+  assert.deepEqual(await check.json(), { available: true });
+  // Not in the catalog: no call, a plain message, not retried.
+  const gone = make([row('glm-5.3')]);
+  const response = await gone.handle(await post({ passage: 'A passage.' }), env);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.equal((await response.json()).error.message, UNAVAILABLE);
+  assert.equal(gone.sent.length, 0);
+  assert.deepEqual(await (await gone.handle(await sign('/api/model'), env)).json(), { available: false });
+  // The catalog route is gone.
+  assert.equal((await gone.handle(await sign('/api/catalog'), env)).status, 404);
+});

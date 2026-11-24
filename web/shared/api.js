@@ -63,7 +63,7 @@ export function createApi({
       response = await fetchImpl(`${base}${path}`, init);
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
-      if (error?.name === 'TimeoutError') throw new ApiError({ code: 'request_timeout', message: 'The request took longer than three minutes. Try again, or choose another model.' });
+      if (error?.name === 'TimeoutError') throw new ApiError({ code: 'request_timeout', message: 'The request took longer than three minutes. Try again.' });
       throw new ApiError({ code: 'network_error', message: 'The CUNY AI Lab service could not be reached. Check your connection and try again.' });
     }
     let data;

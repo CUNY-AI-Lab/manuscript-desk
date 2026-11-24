@@ -27,15 +27,15 @@ const body = (overrides = {}) => ({ model: 'glm-5.3', docType: 'article', group:
 // The controls a model call carried: everything but the fixed fields of the payload.
 async function controlsFor(row, model = row?.id ?? 'not-in-catalog') {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ rows: row ? [row] : [], sent }) });
-  assert.equal((await handle(await rulesRequest(body({ model })), env)).status, 200);
+  const handle = createHandler({ model, gatewayFetch: gateway({ rows: row ? [row] : [], sent }) });
+  assert.equal((await handle(await rulesRequest(body()), env)).status, 200);
   const { model: _, temperature, response_format, messages, ...controls } = sent[0].payload;
   return controls;
 }
 
 test('sends system prompt, user text, temperature 0 and json_object', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ rows: [catalogRow('glm-5.3')], sent }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ rows: [catalogRow('glm-5.3')], sent }) });
   const logged = [];
   const methods = ['log', 'info', 'warn', 'error', 'debug'];
   const saved = methods.map(name => console[name]);
@@ -84,7 +84,7 @@ test('adds reasoning_effort low for a reasoning row', async () => {
 
 test('returns the model content and a request id', async () => {
   const content = '{"rules":[{"category":"quotations","slot":"quotes.primary","statement":"Use double quotation marks.","quote":"use double quotation marks","mode":"fix","params":{"style":"double"}}],"manual":{"named":null}}';
-  const handle = createHandler({ gatewayFetch: gateway({ reply: ok(content) }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply: ok(content) }) });
   const requestId = crypto.randomUUID();
   const response = await handle(await rulesRequest(body(), { 'x-cail-request-id': requestId }), env);
   assert.equal(response.status, 200);
@@ -94,15 +94,14 @@ test('returns the model content and a request id', async () => {
   assert.match(fresh.request_id, /^[0-9a-f-]{36}$/);
 });
 
-test('rejects text over 60000 characters, unknown docType, unknown group, bad model id', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+test('rejects text over 60000 characters, unknown docType, unknown group', async () => {
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: noGateway });
   const secret = 'Private guidelines sentence that must never be echoed. ';
   const long = secret.repeat(Math.ceil(60001 / secret.length)).slice(0, 60001);
   const cases = [
     [body({ text: long }), 'invalid_request'],
     [body({ docType: 'novel' }), 'invalid_request'],
     [body({ group: 'layout' }), 'invalid_request'],
-    [body({ model: 'openrouter/glm-5.3' }), 'invalid_model'],
   ];
   for (const [request, code] of cases) {
     const response = await handle(await rulesRequest(request), env);
@@ -115,37 +114,37 @@ test('rejects text over 60000 characters, unknown docType, unknown group, bad mo
     assert.deepEqual(await failure(await handle(await rulesRequest(request), env)), [400, 'invalid_request'], JSON.stringify(request));
   }
   // Exactly 60,000 characters is accepted.
-  const handleOk = createHandler({ gatewayFetch: gateway() });
+  const handleOk = createHandler({ model: 'glm-5.3', gatewayFetch: gateway() });
   assert.equal((await handleOk(await rulesRequest(body({ text: long.slice(0, 60000) })), env)).status, 200);
 });
 
 test('maps finish_reason length to 502 model_output_limit', async () => {
-  const handle = createHandler({ gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"rules":[{"cat' }, finish_reason: 'length' }] } }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"rules":[{"cat' }, finish_reason: 'length' }] } }) });
   const response = await handle(await rulesRequest(body()), env);
   assert.equal(response.headers.get('x-should-retry'), 'false');
   const message = (await response.clone().json()).error.message;
   assert.deepEqual(await failure(response), [502, 'model_output_limit']);
-  assert.equal(message, 'The model ran out of room before it finished reading this part of the guidelines. Try again, or choose another model.');
+  assert.equal(message, 'The model ran out of room before it finished reading this part of the guidelines. Try again.');
 });
 
 test('maps empty content to 502 invalid_model_response', async () => {
   for (const reply of [ok(''), ok('  \n'), { choices: [{ message: { content: null }, finish_reason: 'stop' }] }, { choices: [] }, null]) {
-    const handle = createHandler({ gatewayFetch: gateway({ reply }) });
+    const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply }) });
     assert.deepEqual(await failure(await handle(await rulesRequest(body()), env)), [502, 'invalid_model_response'], JSON.stringify(reply));
   }
-  const unreadable = createHandler({ gatewayFetch: gateway({ reply: () => new Response('not json', { headers: { 'content-type': 'application/json' } }) }) });
+  const unreadable = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply: () => new Response('not json', { headers: { 'content-type': 'application/json' } }) }) });
   assert.deepEqual(await failure(await unreadable(await rulesRequest(body()), env)), [502, 'invalid_model_response']);
 });
 
 test('requires sign-in', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: noGateway });
   const request = at('/api/rules', { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json' }, body: JSON.stringify(body()) });
   assert.deepEqual(await failure(await handle(request, env)), [401, 'authentication_required']);
 });
 
 test('passes a Gateway 429 through with x-should-retry true', async () => {
   const limited = () => cailErrorResponse(429, cailErrorEnvelope({ code: 'rate_limited', type: 'rate_limit_error', message: 'Too many requests right now.', cail: { retry_after_seconds: 5 } }), { 'x-should-retry': 'true', 'retry-after': '5' });
-  const handle = createHandler({ gatewayFetch: gateway({ reply: limited }) });
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: gateway({ reply: limited }) });
   const response = await handle(await rulesRequest(body()), env);
   assert.equal(response.headers.get('x-should-retry'), 'true');
   assert.equal(response.headers.get('retry-after'), '5');

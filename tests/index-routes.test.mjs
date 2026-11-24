@@ -31,7 +31,7 @@ test('each route sends its payload with the text as the user message and logs no
   const row = catalogRow('m-1');
   for (const [path, body, , expected] of ROUTES) {
     const sent = [];
-    const handle = createHandler({ gatewayFetch: gateway({ rows: [row], sent }) });
+    const handle = createHandler({ model: 'm-1', gatewayFetch: gateway({ rows: [row], sent }) });
     const logged = [];
     const methods = ['log', 'info', 'warn', 'error', 'debug'];
     const saved = methods.map(name => console[name]);
@@ -62,12 +62,12 @@ test('the terms call has room for its answer with thinking off; the judge call t
   assert.ok(JUDGE_OUTPUT_TOKENS < 10000);
 });
 
-test('rejects too long or empty texts, an unknown judgment and a bad model, never echoing the text', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+test('rejects too long or empty texts, an unknown judgment, never echoing the text', async () => {
+  const handle = createHandler({ model: 'm-1', gatewayFetch: noGateway });
   const secret = 'Private manuscript sentence that must never be echoed. ';
   const long = secret.repeat(Math.ceil(40001 / secret.length)).slice(0, 40001);
   for (const [path, body, field] of ROUTES) {
-    for (const [change, code] of [[{ [field]: long }, 'invalid_request'], [{ [field]: ' ' }, 'invalid_request'], [{ [field]: 3 }, 'invalid_request'], [{ model: 'bad/model' }, 'invalid_model']]) {
+    for (const [change, code] of [[{ [field]: long }, 'invalid_request'], [{ [field]: ' ' }, 'invalid_request'], [{ [field]: 3 }, 'invalid_request']]) {
       const response = await handle(await post(path, { ...body, ...change }), env);
       const text = await response.clone().text();
       assert.deepEqual(await failure(response), [400, code], `${path} ${Object.keys(change)[0]}`);
@@ -80,7 +80,7 @@ test('rejects too long or empty texts, an unknown judgment and a bad model, neve
 
 test('a cut-off reply is model_output_limit with the route\'s own message', async () => {
   for (const [path, body] of ROUTES) {
-    const handle = createHandler({ gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"en' }, finish_reason: 'length' }] } }) });
+    const handle = createHandler({ model: 'm-1', gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"en' }, finish_reason: 'length' }] } }) });
     const response = await handle(await post(path, body), env);
     const { message } = (await response.clone().json()).error;
     assert.deepEqual(await failure(response), [502, 'model_output_limit']);
@@ -89,7 +89,7 @@ test('a cut-off reply is model_output_limit with the route\'s own message', asyn
 });
 
 test('requires sign-in and the tool origin', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+  const handle = createHandler({ model: 'm-1', gatewayFetch: noGateway });
   for (const [path, body] of ROUTES) {
     const anonymous = at(path, { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     assert.deepEqual(await failure(await handle(anonymous, env)), [401, 'authentication_required']);

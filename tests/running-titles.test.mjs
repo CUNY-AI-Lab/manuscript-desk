@@ -66,7 +66,7 @@ test('a proposal over the limit is asked for once more, with the length it had',
 test('the route sends the running-titles payload, thinking off, and returns the content', async () => {
   const row = catalogRow('titler-1');
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ rows: [row], sent }) });
+  const handle = createHandler({ model: 'titler-1', gatewayFetch: gateway({ rows: [row], sent }) });
   const { titles } = runningTitlesRequest(CHAPTERS);
   const response = await handle(await post({ model: 'titler-1', titles, max: 60 }), env);
   assert.equal(response.status, 200);
@@ -77,15 +77,14 @@ test('the route sends the running-titles payload, thinking off, and returns the 
   assert.ok(sent[0].max_tokens > RUNNING_TITLES_OUTPUT_TOKENS);
 });
 
-test('the route rejects a bad length, empty or oversized titles and a bad model, without echoing the titles', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+test('the route rejects a bad length, empty or oversized titles, without echoing the titles', async () => {
+  const handle = createHandler({ model: 'titler-1', gatewayFetch: noGateway });
   const secret = 'Private chapter title that must never be echoed. ';
   for (const [body, code] of [
     [{ model: 'titler-1', titles: 'x', max: 5 }, 'invalid_request'],
     [{ model: 'titler-1', titles: 'x', max: 60.5 }, 'invalid_request'],
     [{ model: 'titler-1', titles: ' ', max: 60 }, 'invalid_request'],
     [{ model: 'titler-1', titles: secret.repeat(500), max: 60 }, 'invalid_request'],
-    [{ model: 'openrouter/x', titles: secret, max: 60 }, 'invalid_model'],
   ]) {
     const response = await handle(await post(body), env);
     const text = await response.clone().text();

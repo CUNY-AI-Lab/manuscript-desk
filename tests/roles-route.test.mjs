@@ -37,7 +37,7 @@ test('the roles prompt offers every role with its definition and asks for the JS
 test('sends the roles payload, the passage as the user message, and logs nothing', async () => {
   const row = catalogRow('labeller-1');
   const sent = [];
-  const handle = createHandler({ gatewayFetch: gateway({ rows: [row], sent }) });
+  const handle = createHandler({ model: 'labeller-1', gatewayFetch: gateway({ rows: [row], sent }) });
   const logged = [];
   const methods = ['log', 'info', 'warn', 'error', 'debug'];
   const saved = methods.map(name => console[name]);
@@ -66,41 +66,41 @@ test('sends the roles payload, the passage as the user message, and logs nothing
 });
 
 test('returns the content with the request id it was given', async () => {
-  const handle = createHandler({ gatewayFetch: gateway() });
+  const handle = createHandler({ model: 'labeller-1', gatewayFetch: gateway() });
   const requestId = crypto.randomUUID();
   const response = await handle(await rolesRequest(body(), { 'x-cail-request-id': requestId }), env);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await response.json(), { content: REPLY, request_id: requestId });
 });
 
-test('rejects a passage over 40000 characters, an empty one, a bad model id, and never echoes the passage', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+test('rejects a passage over 40000 characters, an empty one, and never echoes the passage', async () => {
+  const handle = createHandler({ model: 'labeller-1', gatewayFetch: noGateway });
   const secret = 'Private manuscript sentence that must never be echoed. ';
   const long = secret.repeat(Math.ceil(40001 / secret.length)).slice(0, 40001);
-  for (const [request, code] of [[body({ passage: long }), 'invalid_request'], [body({ passage: '' }), 'invalid_request'], [body({ passage: ' \n' }), 'invalid_request'], [body({ passage: 7 }), 'invalid_request'], [body({ model: 'openrouter/x' }), 'invalid_model'], [[], 'invalid_request'], [null, 'invalid_request']]) {
+  for (const [request, code] of [[body({ passage: long }), 'invalid_request'], [body({ passage: '' }), 'invalid_request'], [body({ passage: ' \n' }), 'invalid_request'], [body({ passage: 7 }), 'invalid_request'], [[], 'invalid_request'], [null, 'invalid_request']]) {
     const response = await handle(await rolesRequest(request), env);
     const text = await response.clone().text();
     assert.deepEqual(await failure(response), [400, code], JSON.stringify(request).slice(0, 60));
     assert.equal(text.includes('Private manuscript'), false);
   }
-  const handleOk = createHandler({ gatewayFetch: gateway() });
+  const handleOk = createHandler({ model: 'labeller-1', gatewayFetch: gateway() });
   assert.equal((await handleOk(await rolesRequest(body({ passage: long.slice(0, 40000) })), env)).status, 200);
 });
 
 test('maps a cut-off reply and an empty one to 502', async () => {
-  const cut = createHandler({ gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"roles":{"0":' }, finish_reason: 'length' }] } }) });
+  const cut = createHandler({ model: 'labeller-1', gatewayFetch: gateway({ reply: { choices: [{ message: { content: '{"roles":{"0":' }, finish_reason: 'length' }] } }) });
   const response = await cut(await rolesRequest(body()), env);
   const { message } = (await response.clone().json()).error;
   assert.deepEqual(await failure(response), [502, 'model_output_limit']);
   assert.match(message, /labelling this part of the manuscript/);
   for (const reply of [ok(''), { choices: [] }, null]) {
-    const handle = createHandler({ gatewayFetch: gateway({ reply }) });
+    const handle = createHandler({ model: 'labeller-1', gatewayFetch: gateway({ reply }) });
     assert.deepEqual(await failure(await handle(await rolesRequest(body()), env)), [502, 'invalid_model_response']);
   }
 });
 
 test('requires sign-in, a JSON body and the tool origin', async () => {
-  const handle = createHandler({ gatewayFetch: noGateway });
+  const handle = createHandler({ model: 'labeller-1', gatewayFetch: noGateway });
   const anonymous = at('/api/roles', { method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json' }, body: JSON.stringify(body()) });
   assert.deepEqual(await failure(await handle(anonymous, env)), [401, 'authentication_required']);
   assert.deepEqual(await failure(await handle(await rolesRequest(body(), { origin: 'https://elsewhere.example' }), env)), [403, 'invalid_origin']);
@@ -109,7 +109,7 @@ test('requires sign-in, a JSON body and the tool origin', async () => {
 
 test('passes a Gateway 429 through with x-should-retry true', async () => {
   const limited = () => cailErrorResponse(429, cailErrorEnvelope({ code: 'rate_limited', type: 'rate_limit_error', message: 'Too many requests right now.', cail: { retry_after_seconds: 5 } }), { 'x-should-retry': 'true', 'retry-after': '5' });
-  const handle = createHandler({ gatewayFetch: gateway({ reply: limited }) });
+  const handle = createHandler({ model: 'labeller-1', gatewayFetch: gateway({ reply: limited }) });
   const response = await handle(await rolesRequest(body()), env);
   assert.equal(response.headers.get('x-should-retry'), 'true');
   assert.deepEqual(await failure(response), [429, 'rate_limited']);

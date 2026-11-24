@@ -6,6 +6,7 @@
 // and, when the scholar ticks the reading check (which states its number of calls first), each
 // chapter's opening.
 
+import { MODEL } from '../../lib/calls/model.js';
 import { ApiError } from '../shared/api.js';
 import { STALE, afterFormat, buildOutputs, isStale, outputBasis, readingPlan, runningTitlesRule } from './output-state.js';
 import { el } from './rules-view.js';
@@ -28,11 +29,11 @@ export function createOutputStep(ctx) {
   const basis = () => outputBasis({ sheet: state.sheet, roles: ctx.roles(), reading: wantsReading() });
 
   const readText = async ({ unit }) => {
-    const model = $('roles-model-select').value;
+    const model = MODEL;
     const key = `${model}\u0000${unit}`;
     if (!readingAsked.has(key)) {
       try {
-        readingAsked.set(key, (await api.post('/api/reading', { model, unit })).content);
+        readingAsked.set(key, (await api.post('/api/reading', { unit })).content);
       } catch (failure) {
         throw failure instanceof ApiError ? { code: failure.code, retry: failure.retry, status: failure.status, retryAfter: failure.retryAfter } : failure;
       }
@@ -41,11 +42,11 @@ export function createOutputStep(ctx) {
   };
 
   const proposeTitles = async ({ titles, max }) => {
-    const model = $('roles-model-select').value;
+    const model = MODEL;
     const key = `${model}\u0000${max}\u0000${titles}`;
     if (!titlesAsked.has(key)) {
       try {
-        titlesAsked.set(key, (await api.post('/api/running-titles', { model, titles, max })).content);
+        titlesAsked.set(key, (await api.post('/api/running-titles', { titles, max })).content);
       } catch (failure) {
         throw failure instanceof ApiError ? { code: failure.code, message: failure.message } : failure;
       }

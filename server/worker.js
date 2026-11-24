@@ -6,6 +6,7 @@ import { modelControls } from './model.js';
 import { GROUPS, readingPayload, rolesPayload, rulesPrompt, runningTitlesPayload, settingsPayload } from './prompts.js';
 import { judgePayload, rangesPayload, termsPayload } from './index-prompts.js';
 import { JUDGE_TASKS } from '../lib/index/judge.js';
+import { MODEL, UNAVAILABLE } from '../lib/calls/model.js';
 
 const ORIGIN = 'https://tools.ailab.gc.cuny.edu';
 const AUDIENCE = 'cail:manuscript';
@@ -25,7 +26,7 @@ const MAX_TITLES_CHARS = 20000;
 const CATALOG_CACHE_MS = 10 * 60 * 1000;
 const CATALOG_RETRY_MS = 30000;
 const CATALOG_TIMEOUT_MS = 5000;
-const TIMEOUT_ADVICE = 'Try a shorter section or another model.';
+const TIMEOUT_ADVICE = 'Try again in a minute.';
 const CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 class AppError extends Error {
@@ -64,11 +65,6 @@ async function bodyJSON(request) {
   catch (error) { if (error instanceof AppError) throw error; throw new AppError('invalid_request', 'The request could not be read.'); }
 }
 
-function validateModel(model) {
-  if (typeof model !== 'string' || model.length > 200 || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(model)) throw new AppError('invalid_model', 'Choose a model or enter its exact prefix-free Gateway ID.');
-  return model;
-}
-
 async function verifierConfigs(env) {
   const configs = await Promise.all([AUDIENCE, 'cail:gateway'].map(expectedAudience => loadIdentityVerifierConfig({ jwks: env.CAIL_IDENTITY_JWKS, issuer: env.CAIL_IDENTITY_ISSUER, expectedAudience, supportedIssuers: [CAIL_CANONICAL_ISSUER] })));
   if (configs.some(result => !result.ok)) throw new AppError('identity_unavailable', 'Sign-in verification is temporarily unavailable.', 503);
@@ -105,7 +101,9 @@ async function authenticate(request, env) {
 
 // Gateway calls go through env.GATEWAY, a service binding to the Gateway Worker (cail-model-api).
 // Tests may pass gatewayFetch, or fetchImpl; this Worker reaches nothing else.
-export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_MS } = {}) {
+// `model`: the model every route uses. Only the local dev server passes another (for a measurement
+// run with the owner's own key); a request's own "model" field is never read.
+export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_MS, model: fixedModel = MODEL } = {}) {
   let binding = null;
   const viaBinding = (input, init) => {
     if (!binding) throw new TypeError('GATEWAY service binding is not configured.');
@@ -116,25 +114,31 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
   // requests share one read, which has its own short deadline and ignores any one caller's signal,
   // so a person cancelling their request cannot poison the cache. Only a failed read is held back
   // for 30 s; meanwhile models are treated as unlisted.
-  let catalogCache = { at: 0, models: new Map() };
+  let catalogCache = { at: 0, models: new Map(), read: false };
   let catalogRead = null;
   function catalogModels() {
     if (Date.now() - catalogCache.at <= CATALOG_CACHE_MS) return Promise.resolve(catalogCache.models);
     catalogRead ??= client.getCatalogSnapshot({ modality: 'all', signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS) })
-      .then(catalog => { catalogCache = { at: Date.now(), models: new Map(catalog.data.map(row => [row.id, row])) }; },
-        () => { catalogCache = { at: Date.now() - CATALOG_CACHE_MS + CATALOG_RETRY_MS, models: new Map() }; })
+      .then(catalog => { catalogCache = { at: Date.now(), models: new Map(catalog.data.map(row => [row.id, row])), read: true }; },
+        () => { catalogCache = { at: Date.now() - CATALOG_CACHE_MS + CATALOG_RETRY_MS, models: new Map(), read: false }; })
       .then(() => catalogCache.models)
       .finally(() => { catalogRead = null; });
     return catalogRead;
   }
   // The catalog row for a model (undefined when unlisted or the catalog is unreadable), for the
   // model routes to size their output budget.
+  // A catalog that was read, lists models and does not list this one means the tool cannot work for
+  // now: the route says so plainly instead of calling anything. An unreadable or empty catalog is not
+  // that: the call goes ahead with the default output budget.
   async function catalogRow(model, signal) {
     signal.throwIfAborted();
     let onAbort;
     const aborted = new Promise((_, reject) => { onAbort = () => reject(signal.reason); signal.addEventListener('abort', onAbort, { once: true }); });
-    try { return (await Promise.race([catalogModels(), aborted])).get(model); }
-    finally { signal.removeEventListener('abort', onAbort); }
+    try {
+      const models = await Promise.race([catalogModels(), aborted]);
+      if (catalogCache.read && models.size && !models.has(model)) throw new AppError('model_unavailable', UNAVAILABLE, 503);
+      return models.get(model);
+    } finally { signal.removeEventListener('abort', onAbort); }
   }
   // The text of one model reply, or an AppError: a reply cut off at its length limit, one that does
   // not parse, or one with no content. Nothing of the request or the reply is logged.
@@ -142,11 +146,11 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
     const correlation = { request_id: requestId, trace_id: crypto.randomUUID().replaceAll('-', ''), span_id: crypto.randomUUID().replaceAll('-', '').slice(0, 16), trace_flags: 0 };
     const response = await client.chatCompletions(payload, credential, { signal, correlation });
     let data;
-    try { data = JSON.parse(await boundedText(response)); } catch (error) { if (error instanceof AppError) throw error; throw new AppError('invalid_model_response', 'The model returned a response this tool could not read. Try again, or choose another model.', 502); }
+    try { data = JSON.parse(await boundedText(response)); } catch (error) { if (error instanceof AppError) throw error; throw new AppError('invalid_model_response', 'The model returned a response this tool could not read. Try again.', 502); }
     const choice = data?.choices?.[0];
     if (choice?.finish_reason === 'length') throw new AppError('model_output_limit', lengthMessage, 502);
     const content = choice?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) throw new AppError('invalid_model_response', 'The model returned an empty answer. Try again, or choose another model.', 502);
+    if (typeof content !== 'string' || !content.trim()) throw new AppError('invalid_model_response', 'The model returned an empty answer. Try again.', 502);
     return content;
   }
   return async function handle(request, env) {
@@ -173,23 +177,28 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
       const path = url.pathname.slice(MOUNT.length);
       if (path === '/api/session' && request.method === 'GET') return json({ authenticated: true });
       if (path === '/api/quota' && request.method === 'GET') return json(await client.getQuota(credential, { signal }));
-      if (path === '/api/catalog' && request.method === 'GET') return json(await client.getCatalogSnapshot({ modality: 'all', signal }));
+      // Whether the model the tool uses is offered now: true, false, or null when the catalog
+      // could not be read (the pages then go ahead and let a call say what is wrong).
+      if (path === '/api/model' && request.method === 'GET') {
+        const models = await catalogModels();
+        return json({ available: catalogCache.read && models.size ? models.has(fixedModel) : null });
+      }
       if (path === '/api/rules' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph, an edited collection or a dissertation.');
         if (!GROUPS.includes(body.group)) throw new AppError('invalid_request', 'The request named a part of the guidelines this tool does not read. Reload the page and try again.');
         // The text is never echoed in an error, logged or stored.
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
         const payload = { model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: rulesPrompt({ docType: body.docType, group: body.group }) }, { role: 'user', content: body.text }], ...modelControls(await catalogRow(model, signal), RULES_OUTPUT_TOKENS) };
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this part of the guidelines. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this part of the guidelines. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/settings' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (!DOC_TYPES.includes(body.docType)) throw new AppError('invalid_request', 'Choose whether this is an article, a monograph, an edited collection or a dissertation.');
         const offered = slotsFor(body.docType);
         // The sentences no reading quoted, if any: a short list of short texts from the same part.
@@ -200,38 +209,38 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
         // The text is never echoed in an error, logged or stored.
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_GUIDELINES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 60,000 characters of guidelines text at a time.');
         const payload = settingsPayload({ model, docType: body.docType, slots: body.slots, text: body.text, unreported, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished this question about the guidelines. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished this question about the guidelines. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/roles' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         // The passage is never echoed in an error, logged or stored.
         if (typeof body.passage !== 'string' || !body.passage.trim() || body.passage.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of the manuscript at a time.');
         const payload = rolesPayload({ model, passage: body.passage, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished labelling this part of the manuscript. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished labelling this part of the manuscript. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/running-titles' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (!Number.isInteger(body.max) || body.max < 10 || body.max > 200) throw new AppError('invalid_request', 'A running title\'s length must be a whole number of characters from 10 to 200.');
         // The titles are never echoed in an error, logged or stored.
         if (typeof body.titles !== 'string' || !body.titles.trim() || body.titles.length > MAX_TITLES_CHARS) throw new AppError('invalid_request', 'Send between 1 and 20,000 characters of chapter titles.');
         const payload = runningTitlesPayload({ model, titles: body.titles, max: body.max, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished the running titles. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished the running titles. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/reading' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         // The chapter's text is never echoed in an error, logged or stored.
         if (typeof body.unit !== 'string' || !body.unit.trim() || body.unit.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of one chapter at a time.');
         const payload = readingPayload({ model, unit: body.unit, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this chapter. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished reading this chapter. Try again.');
         return json({ content, request_id: requestId });
       }
       // The Index Builder. The passage, the hits and the page openings are never echoed in an error,
@@ -239,29 +248,29 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
       if (path === '/api/index/terms' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (typeof body.passage !== 'string' || !body.passage.trim() || body.passage.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of the manuscript at a time.');
         const payload = termsPayload({ model, passage: body.passage, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished proposing terms for this part of the manuscript. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished proposing terms for this part of the manuscript. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/index/judge' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (!JUDGE_TASKS.includes(body.task)) throw new AppError('invalid_request', 'The request asked for a judgment this tool does not make. Reload the page and try again.');
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of places in the book at a time.');
         const payload = judgePayload({ model, task: body.task, text: body.text, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished with these places in the book. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished with these places in the book. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path === '/api/index/ranges' && request.method === 'POST') {
         const body = await bodyJSON(request);
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('invalid_request', 'The request could not be read.');
-        const model = validateModel(body.model);
+        const model = fixedModel;
         if (typeof body.pages !== 'string' || !body.pages.trim() || body.pages.length > MAX_PASSAGE_CHARS) throw new AppError('invalid_request', 'Send between 1 and 40,000 characters of page openings at a time.');
         const payload = rangesPayload({ model, pages: body.pages, row: await catalogRow(model, signal) });
-        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished looking through these pages. Try again, or choose another model.');
+        const content = await modelContent(payload, credential, signal, requestId, 'The model ran out of room before it finished looking through these pages. Try again.');
         return json({ content, request_id: requestId });
       }
       if (path.startsWith('/api/')) throw new AppError('not_found', 'Not found.', 404);
@@ -280,7 +289,7 @@ export function createHandler({ gatewayFetch, fetchImpl, deadlineMs = DEADLINE_M
       const status = known ? (error.status >= 400 ? error.status : 502) : error.name === 'TimeoutError' ? 504 : error.name === 'AbortError' ? 499 : 502;
       const code = known ? error.code : status === 504 ? 'request_timeout' : status === 499 ? 'request_cancelled' : 'service_unavailable';
       const message = known ? (error.code === 'upstream_timeout' ? `${error.message} ${TIMEOUT_ADVICE}` : error.message) : status === 504 ? `The model did not finish within ${DEADLINE_MS / 60000} minutes. ${TIMEOUT_ADVICE}` : status === 499 ? 'The request was cancelled.' : 'The service is temporarily unavailable.';
-      const retry = error instanceof CailError ? error.extras.should_retry : status === 503;
+      const retry = error instanceof CailError ? error.extras.should_retry : status === 503 && code !== 'model_unavailable';
       const retryAfter = error instanceof CailError ? error.extras.retry_after_seconds : undefined;
       return json({ error: { code, message, request_id: requestId, ...(status === 401 ? { launch: LAUNCH_PATH } : {}) } }, status, { 'x-should-retry': retry === true ? 'true' : 'false', 'x-cail-request-id': requestId, ...(Number.isInteger(retryAfter) && retryAfter > 0 ? { 'retry-after': String(retryAfter) } : {}) });
     }

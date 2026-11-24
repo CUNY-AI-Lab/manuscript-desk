@@ -130,6 +130,7 @@ test('rulesPayload is the chat payload the /api/rules route sends', async () => 
   for (const model of ['glm-5.3', 'plain-model', 'not-in-catalog']) {
     const sent = [];
     const handle = createHandler({
+      model,
       gatewayFetch: async (url, init) => {
         if (new URL(url).pathname === '/v1/catalog') return Response.json({ object: 'list', data: rows });
         sent.push(JSON.parse(init.body));
@@ -137,7 +138,10 @@ test('rulesPayload is the chat payload the /api/rules route sends', async () => 
       },
     });
     const request = await signed('/api/rules', { headers: { origin: ORIGIN, 'content-type': 'application/json' } }, { method: 'POST', body: JSON.stringify({ ...REQUEST, model }) });
-    assert.equal((await handle(request, env)).status, 200);
+    const response = await handle(request, env);
+    // A model the catalog does not list is not called: the tool says it is unavailable.
+    if (model === 'not-in-catalog') { assert.equal(response.status, 503); assert.equal(sent.length, 0); continue; }
+    assert.equal(response.status, 200);
     assert.deepEqual(rulesPayload({ ...REQUEST, model, row: rows.find(entry => entry.id === model) }), sent[0], model);
   }
 });

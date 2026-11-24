@@ -13,7 +13,8 @@ import { judgePlan, runJudge } from '../../lib/index/judge.js';
 import { buildTermPassages, countAndDrop, leftOutParagraphs, mergeProposals, proposeTerms } from '../../lib/index/terms.js';
 import { formatIndex, indexDocx } from '../../lib/index/format.js';
 import { ApiError, createApi } from '../shared/api.js';
-import { chooseModel, modelMenu } from '../shared/models.js';
+import { MODEL, UNAVAILABLE } from '../../lib/calls/model.js';
+import { checkModel } from '../shared/models.js';
 import { createStore, watchExpiry } from '../shared/store.js';
 import { fileInput, guardWindow } from '../shared/drop.js';
 import { SAVED_KEY as FORMATTER_LABELS } from '../format/manuscript-state.js';
@@ -120,14 +121,16 @@ function start() {
   const api = { get: (path, options) => client.get(path, options).catch(offered), post: (path, body, options) => client.post(path, body, options).catch(offered) };
   // A refusal reaches the runs as plain data, as in the Formatter.
   const refusal = error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error; };
-  const callTerms = ({ model, passage, signal }) => api.post('/api/index/terms', { model, passage }, { signal }).catch(refusal);
-  const callJudge = ({ model, task, text, signal }) => api.post('/api/index/judge', { model, task, text }, { signal }).catch(refusal);
-  const callRanges = ({ model, pages, signal }) => api.post('/api/index/ranges', { model, pages }, { signal }).catch(refusal);
+  const callTerms = ({ model, passage, signal }) => api.post('/api/index/terms', { passage }, { signal }).catch(refusal);
+  const callJudge = ({ model, task, text, signal }) => api.post('/api/index/judge', { task, text }, { signal }).catch(refusal);
+  const callRanges = ({ model, pages, signal }) => api.post('/api/index/ranges', { pages }, { signal }).catch(refusal);
 
   const announce = message => { $('announcer').textContent = message; };
   const showErrors = messages => { $('error-banner').replaceChildren(...messages.map(message => el('p', { text: message }))); $('error-banner').hidden = messages.length === 0; };
   const showWorkNotice = message => { $('work-notice').textContent = message; $('work-notice').hidden = false; };
-  const model = () => $('model-select').value;
+  // The one model the tool uses; none while the service does not offer it, which keeps the helpers off.
+  let unavailable = false;
+  const model = () => (unavailable ? '' : MODEL);
   const changed = () => { render(); void save(); };
   const failureLine = failure => `${failure.message ?? failure.code}`;
 
@@ -610,17 +613,10 @@ function start() {
     }
   }
 
-  async function loadModels() {
-    const select = $('model-select');
-    try {
-      const menu = modelMenu(await api.get('/api/catalog'));
-      const chosen = select.dataset.chosen === 'true' ? select.value : '';
-      select.replaceChildren(...menu.map(entry => el('option', { value: entry.id, text: entry.label })));
-      select.value = chooseModel(chosen, menu);
-      $('model-help').textContent = menu.length ? 'Used by every model helper on this page; each uses your shared CUNY AI Lab allowance and says how many calls it makes first.' : 'No model is available right now. Reload the page later.';
-    } catch {
-      $('model-help').textContent = 'The list of models could not be loaded. Reload the page to try again.';
-    }
+  async function loadModel() {
+    unavailable = await checkModel(api) === false;
+    $('model-notice').textContent = unavailable ? UNAVAILABLE : '';
+    $('model-notice').hidden = !unavailable;
     render();
   }
 
@@ -637,7 +633,6 @@ function start() {
   $('names-box').addEventListener('input', renderNamesPreview);
   $('download-list').addEventListener('click', () => { const file = termListFile(state.entries); download(file.name, new TextEncoder().encode(file.text), 'text/plain;charset=utf-8'); });
   fileInput({ input: $('manuscript-file'), zone: $('manuscript-drop'), onFiles: ([file]) => chooseManuscript(file), onProblem: fileProblem });
-  $('model-select').addEventListener('change', () => { $('model-select').dataset.chosen = 'true'; render(); });
   $('propose-button').addEventListener('click', () => void propose());
   $('propose-stop').addEventListener('click', () => state.running?.abort());
   fileInput({ input: $('pdf-file'), zone: $('pdf-drop'), onFiles: ([file]) => choosePdf(file), onProblem: fileProblem });
@@ -676,6 +671,6 @@ function start() {
     }
     render();
     void refreshStatus();
-    void loadModels();
+    void loadModel();
   })();
 }

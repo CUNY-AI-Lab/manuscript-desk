@@ -183,7 +183,7 @@ test('the reading prompt lists the kinds and asks for quotations; the payload ke
 
 test('POST /api/reading sends the unit with the reading prompt, and refuses an empty or oversized unit without echoing it', async () => {
   const sent = [];
-  const handle = createHandler({ gatewayFetch: async (url, init) => {
+  const handle = createHandler({ model: 'glm-5.3', gatewayFetch: async (url, init) => {
     if (new URL(url).pathname === '/v1/catalog') return Response.json({ object: 'list', data: [] });
     sent.push(JSON.parse(init.body));
     return Response.json({ choices: [{ message: { role: 'assistant', content: '{"findings":[]}' }, finish_reason: 'stop' }] });

@@ -4,6 +4,7 @@
 // the model is set with textContent. The file's bytes and text stay in memory (job.file); what is
 // kept in this browser is savedLabels(job.labels), which holds no text.
 
+import { MODEL, UNAVAILABLE } from '../../lib/calls/model.js';
 import { readDocx } from '../../lib/docx/read.js';
 import { labelRoles } from '../../lib/roles/label.js';
 import { ROLE_IDS } from '../../lib/roles/roles.js';
@@ -57,7 +58,7 @@ export function createManuscriptStep(ctx) {
     if (cached) return { content: JSON.stringify({ roles: cached }) };
     let reply;
     try {
-      reply = await api.post('/api/roles', { model, passage }, { signal });
+      reply = await api.post('/api/roles', { passage }, { signal });
     } catch (error) {
       throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error;
     }
@@ -68,8 +69,8 @@ export function createManuscriptStep(ctx) {
   };
 
   async function label({ retry = false } = {}) {
-    const model = $('roles-model-select').value;
-    const problems = [!job.file && 'Choose the manuscript in step 4 first.', !model && 'No model is available right now. Reload the page to try again.'].filter(Boolean);
+    const model = MODEL;
+    const problems = [job.unavailable && UNAVAILABLE, !job.file && 'Choose the manuscript in step 4 first.'].filter(Boolean);
     showErrors(problems);
     if (problems.length) return;
     const match = matchFile(job.labels, job.file);

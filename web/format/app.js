@@ -10,7 +10,8 @@ import { splitGuidelines } from '../../lib/rules/chunk.js';
 import { normalizeForMatch } from '../../lib/rules/quote.js';
 import { cleanPastedText, readGuidelines } from '../../lib/guidelines/read.js';
 import { ApiError, createApi } from '../shared/api.js';
-import { chooseModel, modelMenu } from '../shared/models.js';
+import { MODEL, UNAVAILABLE } from '../../lib/calls/model.js';
+import { checkModel } from '../shared/models.js';
 import { createStore, watchExpiry } from '../shared/store.js';
 import { fileInput, guardWindow } from '../shared/drop.js';
 import { el, plainReason, renderAddRule, renderRules } from './rules-view.js';
@@ -180,10 +181,10 @@ export function afterRead(current, result, { retry = false } = {}) {
 // What happened to a part that could not be read, in plain words: a sentence for each known kind
 // of failure, else the Worker's own message, else a general sentence.
 export function failureSentence({ code, message } = {}) {
-  if (code === 'model_output_limit') return 'The model ran out of room on this part. Choose another model and try again.';
+  if (code === 'model_output_limit') return 'The model ran out of room on this part. Try again.';
   if (typeof code === 'string' && code.includes('quota')) return 'Your model allowance is used up, so this part was not read.';
   if (['request_timeout', 'upstream_timeout', 'network_error'].includes(code)) return 'The model service did not answer in time. Try again in a minute.';
-  if (code === 'invalid_model_response') return 'The model\'s answer could not be used. Try again, or choose another model.';
+  if (code === 'invalid_model_response') return 'The model\'s answer could not be used. Try again.';
   if (typeof message === 'string' && message.trim()) return message.trim();
   return 'This part could not be read. Try again.';
 }
@@ -297,7 +298,7 @@ function start() {
     post: (path, body, options) => client.post(path, body, options).catch(offered),
   };
   // Steps 4 to 6 share the manuscript, held in memory only, and its labels.
-  const job = { file: null, labels: null, labelling: null, formatting: false, output: null };
+  const job = { file: null, labels: null, labelling: null, formatting: false, output: null, unavailable: false };
   let extractors = null;
   // The PDF and Word readers (mammoth is large) load only when the first file is added.
   const loadExtractors = () => {
@@ -488,8 +489,8 @@ function start() {
 
   // A refusal reaches extractRuleSheet as plain data: its code, whether and when to ask again, and the Worker's message.
   const refusal = error => { throw error instanceof ApiError ? { code: error.code, retry: error.retry, status: error.status, retryAfter: error.retryAfter, message: error.message } : error; };
-  const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { model, docType, group, text }, { signal }).catch(refusal);
-  const callSettings = ({ model, docType, slots, text, unreported, signal }) => api.post('/api/settings', { model, docType, slots, text, ...(unreported ? { unreported } : {}) }, { signal }).catch(refusal);
+  const callRules = ({ model, docType, group, text, signal }) => api.post('/api/rules', { docType, group, text }, { signal }).catch(refusal);
+  const callSettings = ({ model, docType, slots, text, unreported, signal }) => api.post('/api/settings', { docType, slots, text, ...(unreported ? { unreported } : {}) }, { signal }).catch(refusal);
 
   // Uses the built-in requirements: their rule sheet, as shipped, with no model call.
   function useBuiltIn() {
@@ -511,11 +512,11 @@ function start() {
 
   async function read({ retry = false } = {}) {
     if (!retry && guidelineChoice(state.docType, state.source).builtIn) { useBuiltIn(); return; }
-    const model = $('model-select').value;
+    const model = MODEL;
     const problems = [
+      job.unavailable && UNAVAILABLE,
       !state.docType && 'Choose what you are submitting first.',
       !state.guidelines.length && 'Add the guidelines first: upload a file or paste the text.',
-      !model && 'No model is available right now. Reload the page to try again.',
     ].filter(Boolean);
     showErrors(problems);
     if (problems.length) return;
@@ -656,21 +657,12 @@ function start() {
     }
   }
 
-  async function loadModels() {
-    const select = $('model-select');
-    try {
-      const menu = modelMenu(await api.get('/api/catalog'));
-      const chosen = select.dataset.chosen === 'true' ? select.value : '';
-      select.replaceChildren(...menu.map(entry => el('option', { value: entry.id, text: entry.label })));
-      select.value = chooseModel(chosen, menu);
-      $('model-help').textContent = menu.length ? 'Reading the guidelines uses your shared CUNY AI Lab allowance.' : 'No model is available right now. Reload the page later.';
-      const roles = $('roles-model-select');
-      const rolesChosen = roles.dataset.chosen === 'true' ? roles.value : '';
-      roles.replaceChildren(...menu.map(entry => el('option', { value: entry.id, text: entry.label })));
-      roles.value = chooseModel(rolesChosen, menu);
-    } catch {
-      $('model-help').textContent = 'The list of models could not be loaded. Reload the page to try again.';
-    }
+  // The one model the tool uses: when the service no longer offers it, the page says so and sends nothing.
+  async function loadModel() {
+    job.unavailable = await checkModel(api) === false;
+    $('model-notice').textContent = job.unavailable ? UNAVAILABLE : '';
+    $('model-notice').hidden = !job.unavailable;
+    render();
   }
 
   for (const input of document.querySelectorAll('input[name="doc-type"]')) input.addEventListener('change', () => chooseDocType(input.value));
@@ -679,8 +671,6 @@ function start() {
   guardWindow();
   fileInput({ input: $('guideline-files'), zone: $('guidelines-drop'), clear: true, onFiles: addFiles, onProblem: message => showErrors([message]) });
   $('add-pasted').addEventListener('click', addPasted);
-  $('model-select').addEventListener('change', () => { $('model-select').dataset.chosen = 'true'; });
-  $('roles-model-select').addEventListener('change', () => { $('roles-model-select').dataset.chosen = 'true'; });
   $('read-button').addEventListener('click', () => void read());
   $('stop-button').addEventListener('click', () => state.running?.abort());
   $('download-sheet').addEventListener('click', downloadSheet);
@@ -718,6 +708,6 @@ function start() {
     }
     render();
     void refreshStatus();
-    void loadModels();
+    void loadModel();
   })();
 }

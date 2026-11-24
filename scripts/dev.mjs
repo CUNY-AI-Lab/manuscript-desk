@@ -18,7 +18,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 
 let local;
 try {
-  local = await startDevServer({ port, key });
+  local = await startDevServer({ port, key, model: process.env.MANUSCRIPT_DESK_MODEL?.trim() || undefined });
 } catch (error) {
   console.error(error?.code === 'EADDRINUSE' ? `Port ${port} is in use. Set PORT to another port.` : 'The local server could not start.');
   process.exit(1);

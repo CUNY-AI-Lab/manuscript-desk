@@ -21,6 +21,7 @@
 <div class="workspace"><div class="work-column">
 <div id="error-banner" class="notice error" role="alert" hidden></div>
 <div id="signin-notice" class="notice error" role="alert" hidden></div>
+<div id="model-notice" class="notice error" role="alert" hidden></div>
 <p id="work-notice" class="notice info" hidden></p>
 
 <section class="panel" aria-labelledby="terms-title">
@@ -64,9 +65,6 @@
 <p class="drop-label" aria-hidden="true">Drag a file here, or choose one</p>
 </div>
 <p id="manuscript-status" class="help" aria-live="polite"></p>
-<label for="model-select">Model</label>
-<select id="model-select" aria-describedby="model-help"></select>
-<p id="model-help" class="help">Loading the list of models…</p>
 </fieldset>
 <div class="panel-actions"><button id="propose-button" class="button primary" type="button" disabled>Propose terms</button><button id="propose-stop" class="button secondary" type="button" hidden>Stop</button></div>
 <div id="propose-progress-area" hidden><p id="propose-progress-text" role="status" aria-live="polite"></p><progress id="propose-progress" max="1" value="0" aria-labelledby="propose-progress-text"></progress></div>

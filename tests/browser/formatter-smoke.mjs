@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
-import { DEFAULT_MODEL } from '../../web/shared/models.js';
+import { UNAVAILABLE } from '../../lib/calls/model.js';
 import { LOADED_NOTICE } from '../../web/format/app.js';
 import { readDocx } from '../../lib/docx/read.js';
 import { validateDocx } from '../../lib/docx/validate.js';
@@ -47,13 +47,12 @@ await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const pageUrl = `${origin}/manuscript/format/`;
 
-const catalog = await readFile(join(FIXTURES, 'catalog-2026-11-09.json'), 'utf8');
 const quota = { object: 'quota', unit: 'microdollar', limit: 50000000, estimated_used: 105038, estimated_remaining: 49894962, used_percent: 0, window_seconds: 2592000, window_technique: 'fixed', calculated_at: 1794285677 };
 const json = (route, body, status = 200, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers: { 'x-should-retry': 'false', ...headers }, body: JSON.stringify(body) });
 
 // Mocks the routes; `rules` answers POST /api/rules from the request body, and POST /api/settings
 // (the focused question about settings the reading missed) answers that no setting is stated.
-async function mock(context, rules) {
+async function mock(context, rules, { available = true } = {}) {
   const calls = [];
   calls.settings = [];
   await context.route('**/manuscript/api/settings', route => {
@@ -62,7 +61,7 @@ async function mock(context, rules) {
   });
   await context.route('**/manuscript/api/session', route => json(route, { authenticated: true }));
   await context.route('**/manuscript/api/quota', route => json(route, quota));
-  await context.route('**/manuscript/api/catalog', route => route.fulfill({ status: 200, contentType: 'application/json', body: catalog }));
+  await context.route('**/manuscript/api/model', route => json(route, { available }));
   await context.route('**/manuscript/api/rules', route => {
     const body = JSON.parse(route.request().postData());
     calls.push({ body, headers: route.request().headers() });
@@ -126,11 +125,13 @@ try {
   const requested = [];
   page.on('request', request => requested.push(new URL(request.url()).pathname));
   await page.goto(pageUrl);
-  await page.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.equal(await page.locator('#session-status').textContent(), 'Signed in with CUNY');
   assert.match(await page.locator('.quota-number').textContent(), /\$49\.89 remaining/);
   assert.ok(!requested.some(path => path.endsWith('guidelines-extractors.js')), 'the file readers are not loaded on page open');
-  log('page opened: signed in, usage shown, model menu defaults to deepseek-v4.1-flash-1017, file readers not loaded yet');
+  assert.equal(await page.locator('select').count(), 0, 'no model menu');
+  assert.equal(await page.locator('#model-notice').isHidden(), true);
+  log('page opened: signed in, usage shown, no model menu, file readers not loaded yet');
 
   await page.getByLabel('Monograph').check();
   assert.equal(await page.locator('#guidelines-drop .drop-label').textContent(), 'Drag files here, or choose them');
@@ -156,7 +157,7 @@ try {
   assert.ok(calls.settings.every(body => body.slots.length > 0 || Array.isArray(body.unreported)));
   assert.ok(!settingsQuestions[0].slots.includes('quotes.primary') && settingsQuestions[0].slots.includes('notes.kind'));
   for (const { body, headers } of calls) {
-    assert.equal(body.model, DEFAULT_MODEL);
+    assert.equal(body.model, undefined, 'the page names no model');
     assert.equal(body.docType, 'monograph');
     assert.ok(body.text.includes(SENTENCE) && !body.text.includes('\r'));
     assert.equal(headers['content-type'], 'application/json');
@@ -188,7 +189,7 @@ try {
   assert.equal(await page.getByLabel('Monograph').isChecked(), false);
   await untilSaved(page, keys => keys.length === 0, 'was deleted');
   await page.reload();
-  await page.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.equal(await page.locator('.rule').count(), 0, 'nothing comes back after Start over');
   log('Start over cleared the page and the saved copy (nothing restored after a reload)');
 
@@ -290,7 +291,7 @@ try {
   const page2 = await context2.newPage();
   watch(page2);
   await page2.goto(pageUrl);
-  await page2.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page2.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page2.getByLabel('Article').check();
   await page2.locator('#paste-box').fill(`Manuscript preparation\r\n${SENTENCE}\r\n${'Authors should read these instructions in full before they submit. '.repeat(4)}`);
   await page2.getByRole('button', { name: 'Add pasted text' }).click();
@@ -316,7 +317,7 @@ try {
   const page3 = await context3.newPage();
   watch(page3);
   await page3.goto(pageUrl);
-  await page3.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page3.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page3.getByLabel('Edited collection').check();
   await page3.locator('#paste-box').fill(`${SENTENCE} ${'Contributors follow the same rules as the volume editors. '.repeat(4)}`);
   await page3.getByRole('button', { name: 'Add pasted text' }).click();
@@ -364,14 +365,14 @@ try {
   const page4 = await context4.newPage();
   watch(page4);
   await page4.goto(pageUrl);
-  await page4.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page4.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page4.getByLabel('Article').check();
   await page4.locator('#paste-box').fill(`${SENTENCE} ${SINGLE} Number the notes from 1 in each chapter and place them as endnotes. ${'Read all of this before you submit. '.repeat(3)}`);
   await page4.getByRole('button', { name: 'Add pasted text' }).click();
   await page4.getByRole('button', { name: 'Read the guidelines' }).click();
   await page4.getByRole('button', { name: 'Try again' }).waitFor();
   assert.match(await page4.locator('#sheet-notices').textContent(), /could not be read, so rules may be missing about citations, references and notes\./);
-  const failureLine = 'Citations, references and notes in Pasted text 1: The model\'s answer could not be used. Try again, or choose another model.';
+  const failureLine = 'Citations, references and notes in Pasted text 1: The model\'s answer could not be used. Try again.';
   assert.deepEqual(await page4.locator('#failure-notice li').allTextContents(), [failureLine]);
   assert.equal(await page4.locator('.conflicts h3').textContent(), 'The guidelines say two different things');
   assert.equal(await page4.locator('.conflicts .rule').count(), 2);
@@ -403,7 +404,7 @@ try {
   const page6 = await context6.newPage();
   watch(page6);
   await page6.goto(pageUrl);
-  await page6.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page6.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page6.getByLabel('Article').check();
   await page6.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
   await page6.getByRole('button', { name: 'Add pasted text' }).click();
@@ -440,7 +441,7 @@ try {
   const page5 = await context5.newPage();
   watch(page5);
   await page5.goto(pageUrl);
-  await page5.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page5.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page5.getByLabel('Article').check();
   await page5.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
   await page5.getByRole('button', { name: 'Add pasted text' }).click();
@@ -491,7 +492,7 @@ try {
   const page7 = await context7.newPage();
   watch(page7);
   await page7.goto(pageUrl);
-  await page7.waitForFunction(model => document.getElementById('roles-model-select').value === model, DEFAULT_MODEL);
+  await page7.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.match(await page7.locator('#privacy').textContent(), /passages of their text are sent .* not the manuscript or its text/);
   assert.equal(await page7.locator('#format-button').isDisabled(), true, 'nothing to format yet');
   await page7.setInputFiles('#sheet-file', { name: 'sheet.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(sheet7)) });
@@ -506,7 +507,7 @@ try {
   await page7.getByRole('button', { name: 'Read the manuscript' }).click();
   await page7.locator('#review .review-item').first().waitFor();
   assert.equal(roleCalls.length, 1);
-  assert.equal(roleCalls[0].model, DEFAULT_MODEL);
+  assert.equal(roleCalls[0].model, undefined, 'the page names no model');
   assert.match(await page7.locator('#damaging-notice').textContent(), /most damaging mistake/);
   const selects = page7.locator('#review .review-item select');
   const shownRoles = await selects.evaluateAll(list => list.map(select => select.value));
@@ -558,7 +559,7 @@ try {
   await page7.getByRole('button', { name: 'Format the manuscript' }).click();
   await page7.locator('#summary-flagged + ul li', { hasText: 'The reading check read the opening of 2 chapters and proposed 2 queries' }).waitFor();
   assert.equal(readingCalls.length, 2);
-  assert.equal(readingCalls[0].model, DEFAULT_MODEL);
+  assert.equal(readingCalls[0].model, undefined, 'the page names no model');
   const itemsAfter = Number(/(\d+) items? on the To-dos list/.exec(await page7.locator('#output-status').textContent())[1]);
   assert.equal(itemsAfter, itemsBefore + 2, 'the two verified queries are To-dos; the invented one is dropped');
   log('step 6: the reading check states its 2 calls, runs only when ticked, and adds only the queries whose quotation is in the text');
@@ -623,7 +624,7 @@ try {
   const pageD = await contextD.newPage();
   watch(pageD);
   await pageD.goto(pageUrl);
-  await pageD.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await pageD.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.equal(await pageD.locator('#built-in-controls').isHidden(), true, 'no built-in set before a dissertation is chosen');
   await pageD.getByLabel('Dissertation or thesis').check();
   await pageD.locator('#built-in-controls').waitFor();
@@ -667,7 +668,7 @@ try {
   const page9 = await context9.newPage();
   watch(page9);
   await page9.goto(pageUrl);
-  await page9.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page9.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page9.getByLabel('Article').check();
   await page9.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
   await page9.getByRole('button', { name: 'Add pasted text' }).click();
@@ -684,7 +685,7 @@ try {
   assert.deepEqual(await savedKeys(page9), [], 'deleted when the page says so');
   await page9.getByLabel('Monograph').check();
   await page9.reload();
-  await page9.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page9.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.equal(await page9.locator('#sources li').count(), 0, 'nothing was kept, before or after the deletion');
   assert.equal(await page9.getByLabel('Monograph').isChecked(), false);
   log('"Delete saved work now" deleted the saved copy after a question, left the work on the page, and kept nothing of later changes');
@@ -697,7 +698,7 @@ try {
   watch(page10);
   await page10.clock.install();
   await page10.goto(pageUrl);
-  await page10.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page10.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   await page10.getByLabel('Article').check();
   await page10.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
   await page10.getByRole('button', { name: 'Add pasted text' }).click();
@@ -711,10 +712,26 @@ try {
   assert.equal(await page10.getByLabel('Article').isChecked(), false);
   await untilSaved(page10, keys => keys.length === 0, 'was deleted');
   await page10.reload();
-  await page10.waitForFunction(model => document.getElementById('model-select').value === model, DEFAULT_MODEL);
+  await page10.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
   assert.equal(await page10.locator('#sources li').count(), 0, 'and is not in this browser');
   log('with the page left open, the work was deleted from the page and this browser just after 24 hours without a change, and the page said so');
   await context10.close();
+
+  // ---- The service no longer offers the model: the page says so and sends nothing ----
+  const context11 = await browser.newContext();
+  const calls11 = await mock(context11, route => json(route, { request_id: 'r', content: '{"rules":[]}' }), { available: false });
+  const page11 = await context11.newPage();
+  watch(page11);
+  await page11.goto(pageUrl);
+  await page11.locator('#model-notice', { hasText: UNAVAILABLE }).waitFor();
+  await page11.getByLabel('Article').check();
+  await page11.locator('#paste-box').fill(`${SENTENCE} ${'Read all of this before you submit. '.repeat(6)}`);
+  await page11.getByRole('button', { name: 'Add pasted text' }).click();
+  await page11.getByRole('button', { name: 'Read the guidelines' }).click();
+  await page11.locator('#error-banner', { hasText: UNAVAILABLE }).waitFor();
+  assert.equal(calls11.length, 0, 'nothing was sent');
+  log('when the service no longer offers the model, the page says the tool is unavailable for now and sends nothing; no other model is offered');
+  await context11.close();
 
   assert.deepEqual(problems, [], 'no page errors or console errors');
   log('no page errors and no console errors');

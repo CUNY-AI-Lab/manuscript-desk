@@ -36,7 +36,7 @@ before(async () => {
     stream.write = function (chunk, ...rest) { written.push(String(chunk)); return original.call(this, chunk, ...rest); };
   }
   restore = () => { [process.stdout.write, process.stderr.write] = saved; };
-  local = await startDevServer({ port: 0, key: KEY, upstreamFetch, log: line => logged.push(line) });
+  local = await startDevServer({ port: 0, key: KEY, upstreamFetch, log: line => logged.push(line), model: MODEL });
 });
 after(async () => {
   await local?.close();
@@ -73,11 +73,11 @@ test('session is signed in without any browser credential', async () => {
   assert.deepEqual(JSON.parse(response.body), { authenticated: true });
 });
 
-test('catalog reaches the upstream with the key and without identity headers or browser credentials', async () => {
+test('the model check reads the catalog upstream with the key and without identity headers or browser credentials', async () => {
   const before = upstream.length;
-  const response = await send('/manuscript/api/catalog', { headers: { authorization: 'Bearer browser-token', cookie: 'session=browser', 'x-cail-identity-jwt': 'browser-jwt' } });
+  const response = await send('/manuscript/api/model', { headers: { authorization: 'Bearer browser-token', cookie: 'session=browser', 'x-cail-identity-jwt': 'browser-jwt' } });
   assert.equal(response.status, 200);
-  assert.equal(JSON.parse(response.body).data.length, catalog.data.length);
+  assert.deepEqual(JSON.parse(response.body), { available: true });
   const calls = upstream.slice(before);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://tools.ailab.gc.cuny.edu/v1/catalog?modality=all');

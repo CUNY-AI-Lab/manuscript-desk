@@ -21,6 +21,7 @@
 <div class="workspace"><div class="work-column">
 <div id="error-banner" class="notice error" role="alert" hidden></div>
 <div id="signin-notice" class="notice error" role="alert" hidden></div>
+<div id="model-notice" class="notice error" role="alert" hidden></div>
 <p id="work-notice" class="notice info" hidden></p>
 
 <section class="panel" aria-labelledby="doc-type-title">
@@ -56,9 +57,6 @@
 <h3 id="sources-title">Added guidelines</h3>
 <p id="no-sources" class="help">None yet.</p>
 <ul id="sources" class="sources" aria-labelledby="sources-title"></ul>
-<label for="model-select">Model</label>
-<select id="model-select" aria-describedby="model-help"></select>
-<p id="model-help" class="help">Loading the list of models…</p>
 </fieldset>
 <p class="privacy" id="privacy">Your files are opened in this browser and are not uploaded. To read the guidelines and to label the manuscript's paragraphs, passages of their text are sent through the CUNY AI Lab Gateway to open-weight models under no-retention terms; when the rule sheet asks for running titles, the chapter titles are sent the same way; and if you choose the reading check in step 6, the title block, abstract, keywords, headings and the first pages of each chapter, the notes on contributors and the front matter (title page and contents list) are sent the same way. The manuscript is formatted in this browser. Nothing is stored on the server. This browser keeps the guidelines' text, the rule sheet, the paragraph labels and your corrections to them, with the manuscript's file name, but not the manuscript or its text, so that a reload or a new sign-in does not lose them. Downloading the files does not delete them, so you can come back and correct the labels. They are deleted 24 hours after your last change, also while this page stays open, and at once when you choose Start over or Delete saved work now.</p>
 <div class="row-actions"><button id="delete-saved" class="text-button danger" type="button">Delete saved work now</button></div>
@@ -104,8 +102,6 @@
 <p class="section-intro">The model reads the manuscript in passages and labels each paragraph: a chapter's title block, a heading, a quotation, verse, a bibliography entry, body text and so on. Each label decides the style the paragraph gets, so you check the labels before anything is formatted.</p>
 <fieldset id="roles-controls" class="plain">
 <legend class="sr-only">Label the paragraphs</legend>
-<label for="roles-model-select">Model</label>
-<select id="roles-model-select" aria-describedby="roles-plan"></select>
 <p id="roles-plan" class="help"></p>
 </fieldset>
 <div class="panel-actions"><button id="label-button" class="button primary" type="button">Read the manuscript</button><button id="label-stop" class="button secondary" type="button" hidden>Stop</button></div>

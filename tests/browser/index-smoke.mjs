@@ -35,7 +35,6 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/manuscript/index/`;
-const catalog = await readFile(join(FIXTURES, 'catalog-2026-11-09.json'), 'utf8');
 const quota = { object: 'quota', unit: 'microdollar', limit: 50000000, estimated_used: 105038, estimated_remaining: 49894962, used_percent: 0, window_seconds: 2592000, window_technique: 'fixed', calculated_at: 1794285677 };
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'x-should-retry': 'false' }, body: JSON.stringify(body) });
 
@@ -43,7 +42,7 @@ const calls = { terms: [], judge: [], ranges: [] };
 async function mock(context) {
   await context.route('**/manuscript/api/session', route => json(route, { authenticated: true }));
   await context.route('**/manuscript/api/quota', route => json(route, quota));
-  await context.route('**/manuscript/api/catalog', route => route.fulfill({ status: 200, contentType: 'application/json', body: catalog }));
+  await context.route('**/manuscript/api/model', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) }));
   await context.route('**/manuscript/api/index/terms', route => {
     const { passage } = JSON.parse(route.request().postData());
     calls.terms.push(passage);
@@ -103,10 +102,11 @@ try {
   page.on('console', message => { if (message.type() === 'error') problems.push(`console: ${message.text()}`); });
   page.on('dialog', dialog => { dialogs.push(dialog.message()); return dialog.accept(); });
   await page.goto(pageUrl);
-  await page.waitForFunction(() => document.getElementById('model-select').value === 'deepseek-v4.1-flash-1017');
+  await page.locator('#session-status', { hasText: 'Signed in with CUNY' }).waitFor();
+  assert.equal(await page.locator('#model-select').count(), 0, 'no model menu');
   assert.equal(await page.locator('#session-status').textContent(), 'Signed in with CUNY');
   assert.match(await page.locator('#beta-notice').textContent(), /^Beta, under test\./);
-  log('page opened: signed in, model menu defaults to deepseek-v4.1-flash-1017, beta line shown');
+  log('page opened: signed in, no model menu, beta line shown');
 
   // ---- Stage 1: propose terms from the invented manuscript ----
   assert.equal(await dropFiles(page, '#manuscript-drop', [join(FIXTURES, 'manuscript.docx')]), true, 'the drop area is marked while the file is over it');

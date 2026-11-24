@@ -68,10 +68,10 @@ test('a second try merges what it found into the sheet', () => {
 });
 
 test('each failure code has its sentence, then the Worker\'s message, then a general one', () => {
-  const room = 'The model ran out of room on this part. Choose another model and try again.';
+  const room = 'The model ran out of room on this part. Try again.';
   const quota = 'Your model allowance is used up, so this part was not read.';
   const slow = 'The model service did not answer in time. Try again in a minute.';
-  const unusable = 'The model\'s answer could not be used. Try again, or choose another model.';
+  const unusable = 'The model\'s answer could not be used. Try again.';
   const general = 'This part could not be read. Try again.';
   const cases = [
     [{ code: 'model_output_limit', message: 'Worker words.' }, room],
@@ -100,11 +100,11 @@ test('the failure notice names each failed part in plain words', () => {
     { group: 'style', doc: 0, part: 0, half: 1, code: 'model_output_limit' },
   ], guidelines);
   assert.deepEqual(lines, [
-    'Citations, references and notes in press.docx: The model ran out of room on this part. Choose another model and try again.',
+    'Citations, references and notes in press.docx: The model ran out of room on this part. Try again.',
     'Spelling, punctuation and style in series.pdf, part 2 of 2: Your model allowance is used up, so this part was not read.',
     'Structure, layout and other requirements in series.pdf, part 1 of 2: The Worker said this.',
-    'Citations, references and notes in the first half of series.pdf, part 2 of 2: The model ran out of room on this part. Choose another model and try again.',
-    'Spelling, punctuation and style in the second half of press.docx: The model ran out of room on this part. Choose another model and try again.',
+    'Citations, references and notes in the first half of series.pdf, part 2 of 2: The model ran out of room on this part. Try again.',
+    'Spelling, punctuation and style in the second half of press.docx: The model ran out of room on this part. Try again.',
   ]);
   for (const line of lines) assert.doesNotMatch(line, JARGON);
 });

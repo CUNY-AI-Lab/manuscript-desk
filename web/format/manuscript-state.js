@@ -199,11 +199,11 @@ export function unlabelledParagraphs(paragraphs, labels) {
 
 // Why paragraphs could not be labelled, in plain words.
 export function labelFailureSentence({ code, message } = {}) {
-  if (code === 'model_output_limit') return 'The model ran out of room on them, even in smaller passages. Choose another model and try again.';
+  if (code === 'model_output_limit') return 'The model ran out of room on them, even in smaller passages. Try again.';
   if (code === 'incomplete_reply') return 'The model\'s answer left them out.';
   if (typeof code === 'string' && code.includes('quota')) return 'Your model allowance is used up.';
   if (['request_timeout', 'upstream_timeout', 'network_error'].includes(code)) return 'The model service did not answer in time. Try again in a minute.';
-  if (code === 'invalid_model_response') return 'The model\'s answer could not be used. Try again, or choose another model.';
+  if (code === 'invalid_model_response') return 'The model\'s answer could not be used. Try again.';
   if (typeof message === 'string' && message.trim()) return message.trim();
   return 'They could not be labelled. Try again.';
 }
