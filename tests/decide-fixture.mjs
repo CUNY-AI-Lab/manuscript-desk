@@ -3,7 +3,7 @@
 // title page gives only its own title), notes on contributors, a chapter title typed in capitals, a
 // note on an author's line, keywords with mixed separators, a bibliography with a repeated-author
 // dash and a stray letter on a line of its own, a passage of verse typed twice, a quotation pasted
-// one line per paragraph, and a typing slip in running text. All text is invented for the tests.
+// one line per paragraph, a typing slip in running text, and a figure with its caption. All text is invented for the tests.
 // `volume()` returns { bytes, roles, sheet, count, at } (`at` names the paragraphs the tests use).
 import { strToU8, zipSync } from 'fflate';
 
@@ -76,6 +76,8 @@ function children() {
     line('The quotation came in as one paragraph per line, and the', 'block-quotation', INDENTED),
     line('reader is asked to check how it was joined.', 'block-quotation', INDENTED),
     line('The end of the chapter.', 'body'),
+    line('[FIGURE HERE]', 'figure'),
+    line('A paper ship on a pond at dawn.', 'figure'),
   ];
 }
 
@@ -97,6 +99,7 @@ export function volumeSheet() {
       rule('files-3', 'files', null, {}, 'Send a cover image suggestion.', 'supply'),
       rule('other-1', 'other', null, {}, 'Consider whether the volume needs an index of names.', 'flag'),
       rule('other-2', 'other', null, {}, 'The front matter includes a list of illustrations.', 'flag'),
+      rule('figures-1', 'figures-tables', 'figures.markers', { example: '[Figure 1.1 here]' }, 'Mark where each figure goes with a line such as [Figure 1.1 here].'),
     ],
     dropped: 0,
     created: '2026-11-23T12:00:00Z',

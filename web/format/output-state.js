@@ -147,6 +147,8 @@ export async function buildOutputs({ bytes, paragraphs, roles, sheet, name, prop
     ok: true,
     files,
     summary: outputSummary({ report, findings, checks, sheet, comments: validity.counts.comments, revisions: validity.counts.revisions, todos, unplaced: commented.unplaced, running, titles, reading }),
+    // For the measurement scripts: what the author is handed, in counts and places.
+    measures: { comments: validity.counts.comments, commentPlaces: comments.map(comment => comment.sourceIndex), todos: todos.counts, supply: toSupply(sheet, findings, checks).length, checklistRows: (sheet?.rules ?? []).length, report, findings },
   };
 }
 
@@ -267,7 +269,7 @@ export async function buildDecidedOutputs({ bytes, paragraphs, roles, sheet, nam
   const copyeditCount = disposed.copyedit.length + plan.extraCopyedit.length;
   const summaryText = summaryComment({ applied: disposed.applied, report, defaults: finalSheet.applied, settled: disposed.settled, decisions, copyedit: copyeditCount, refusals: plan.refusals.length });
   const chapters = report.chapters ?? [];
-  const { comments, places } = decideComments({ summary: summaryText, asked: disposed.asked, flagged: disposed.flagged, copyedit: disposed.copyedit, extraQuestions: plan.extraQuestions, applied: disposed.applied, chapters, paragraphs, sheet: finalSheet.sheet });
+  const { comments, places } = decideComments({ summary: summaryText, asked: disposed.asked, flagged: disposed.flagged, copyedit: disposed.copyedit, extraQuestions: plan.extraQuestions, applied: disposed.applied, chapters, paragraphs, sheet: finalSheet.sheet, roles: plan.roles });
   const commented = addComments(formatted.bytes, { map: report.map, comments, ...(date ? { date } : {}) });
   if (!commented.ok) return { ok: false, message: GENERAL_FAILURE };
   const validity = validateDocx(commented.bytes);
@@ -304,7 +306,7 @@ export async function buildDecidedOutputs({ bytes, paragraphs, roles, sheet, nam
     ok: true,
     files,
     summary: decidedSummary({ report, applied: disposed.applied, defaults: finalSheet.applied, settled: disposed.settled, asked: disposed.asked, extraQuestions: plan.extraQuestions, chapters, paragraphs, copyeditCount, checklist, comments: validity.counts.comments, revisions: validity.counts.revisions, reading, failedUnits, titles, running }),
-    measures: { comments: validity.counts.comments, places, questions: decisions, copyedit: copyeditCount, checklistRows: checklist.rows, triage, disposed, plan, answers, report, defaults: finalSheet.applied, finalSheet: finalSheet.sheet, statuses0, pipeline: { findings: pipelineFindings.length, report: formatted0.report } },
+    measures: { comments: validity.counts.comments, commentPlaces: comments.map(comment => comment.sourceIndex), questionPlaces: [...disposed.asked.map(finding => finding.paragraphIndex), ...plan.extraQuestions.map(proposal => proposal.paragraphIndex)], places, questions: decisions, copyedit: copyeditCount, checklistRows: checklist.rows, triage, disposed, plan, answers, report, defaults: finalSheet.applied, finalSheet: finalSheet.sheet, statuses0, pipeline: { findings: pipelineFindings.length, report: formatted0.report } },
   };
 }
 

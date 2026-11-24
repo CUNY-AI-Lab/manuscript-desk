@@ -85,8 +85,8 @@ test('a finding leaves the author\'s list only when an operation resolves it, a 
 test('the mechanical operations: contents, dashes, capitals, a duplicate passage, a stray letter', () => {
   const { bytes, roles, sheet } = volume();
   const { paragraphs } = readDocx(bytes);
-  const chapters = [{ first: 13, last: 16, titleBlock: [13, 14], parts: ['title', 'author'] }, { first: 17, last: 30, titleBlock: [17, 18, 19], parts: ['title', 'author', 'affiliation'] }, { first: 31, last: 41, titleBlock: [31, 32, 33], parts: ['title', 'author', 'affiliation'] }];
-  const ops = mechanicalOps({ paragraphs, roles, chapters, sheet });
+  const chapters = [{ first: 13, last: 16, titleBlock: [13, 14], parts: ['title', 'author'] }, { first: 17, last: 30, titleBlock: [17, 18, 19], parts: ['title', 'author', 'affiliation'] }, { first: 31, last: 43, titleBlock: [31, 32, 33], parts: ['title', 'author', 'affiliation'] }];
+  const ops = mechanicalOps({ paragraphs, roles, chapters, sheet, figures: [{ index: 42, label: '2.1', captionAt: 43 }] });
   const byKind = kind => ops.filter(op => op.kind === kind);
   const [contents] = byKind('contents');
   assert.deepEqual(contents.edits.filter(edit => edit.op === 'delete').map(edit => edit.from), [4, 5, 6, 7]);
@@ -101,9 +101,12 @@ test('the mechanical operations: contents, dashes, capitals, a duplicate passage
   assert.deepEqual(duplicate.edits.map(edit => [edit.from, edit.to]), [[35, 36]]);
   const [stray] = byKind('stray');
   assert.deepEqual(stray.paragraphs, [27]);
+  const [list] = byKind('illustrations');
+  assert.deepEqual(list.edits[0].lines.map(line => line.text), ['List of Illustrations', 'Figure 2.1 A paper ship on a pond at dawn.'], 'a list of illustrations, because a rule asks for one');
+  assert.equal(list.edits[0].before, 9, 'after the contents, before the next section of the front matter');
   // No rule, no operation: dashes and capitals are left without a rule asking.
   const bare = mechanicalOps({ paragraphs, roles, chapters, sheet: { ...sheet, rules: [] } });
-  assert.deepEqual(bare.map(op => op.kind).sort(), ['contents', 'duplicate', 'stray']);
+  assert.deepEqual(bare.map(op => op.kind).sort(), ['contents', 'duplicate', 'stray'], 'no rule, no dashes, capitals or list of illustrations');
   // A refrain is not a duplicate: one short line repeated stays.
   assert.equal(authorOf('Writer, J. M. Lanterns at Sea. Nowhere: Press, 1999.'), 'Writer, J. M');
   assert.equal(authorOf('Placeholder, Ada. “Bells at Dusk.”'), 'Placeholder, Ada');
@@ -192,7 +195,8 @@ test('formatting with the decide step does the work, keeps the questions, and ha
   const result = await buildOutputs({ bytes, paragraphs, roles, sheet, name: 'volume.docx', readText: scriptedReading, decide: scriptedModel(log), date: '2026-11-23T12:00:00Z' });
   assert.equal(result.ok, true, result.message);
   const { measures } = result;
-  assert.deepEqual(measures.disposed.applied.map(op => op.kind).sort(), ['contents', 'dash', 'duplicate', 'stray', 'title-case']);
+  assert.deepEqual(measures.disposed.applied.map(op => op.kind).sort(), ['contents', 'dash', 'duplicate', 'illustrations', 'stray', 'title-case']);
+  assert.equal(measures.report.figures[0].label, '2.1', 'the figure numbered by its chapter, the introduction unnumbered');
   assert.deepEqual(measures.report.edits.refused, []);
   // Words: everything declared, and rejecting every change gives the source back.
   const manuscript = result.files.find(file => file.id === 'manuscript').bytes;
@@ -216,7 +220,8 @@ test('formatting with the decide step does the work, keeps the questions, and ha
   const copyedit = strFromU8(unzipSync(result.files.find(file => file.id === 'copyedit').bytes)['word/document.xml']);
   assert.match(copyedit, /tehm/u);
   // The checklist: the decisions and one row per kind of thing to hand in.
-  assert.equal(measures.checklistRows, measures.triage.filter(entry => entry.end === 'decision').length + new Set(measures.triage.filter(entry => entry.end === 'deliver').map(entry => entry.deliverable)).size);
+  const decisions = measures.triage.filter(entry => entry.end === 'decision');
+  assert.equal(measures.checklistRows, (decisions.some(entry => entry.asked) ? 1 : 0) + decisions.filter(entry => !entry.asked).length + new Set(measures.triage.filter(entry => entry.end === 'deliver').map(entry => entry.deliverable)).size, 'one row for the rules asked in comments, one per other decision, one per kind of thing to hand in');
   // The page's summary, in plain words.
   assert.match(result.summary.headline, /^Formatted\. You need to decide \d+ things?;/u);
   assert.ok(result.summary.defaults.some(line => /^1\.5 line spacing/u.test(line)));
