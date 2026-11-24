@@ -389,3 +389,20 @@ test('layerSheet returns new rule objects and changes neither input', () => {
   layered[1].params.style = 'single';
   assert.deepEqual(base, before.base);
 });
+
+test('a font size for the text inside illustrations is not taken for the body font, so the real font rule is not put in conflict', () => {
+  const guidelines = ['We have a house typeface, the Lantern Serif, that we encourage you to use for the text. When your illustrations contain text, make sure never to use a point size smaller than 8 pt. Set the body text in 12 pt; tables in 10 pt.'];
+  const houseFont = { category: 'layout', slot: 'layout.font', statement: 'Use the Lantern Serif for the text.', quote: 'We have a house typeface, the Lantern Serif, that we encourage you to use for the text.', mode: 'flag', params: { family: 'Lantern Serif', sizePt: null } };
+  const figureSize = { category: 'layout', slot: 'layout.font', statement: 'When illustrations contain text, never use a size below 8 pt.', quote: 'When your illustrations contain text, make sure never to use a point size smaller than 8 pt.', mode: 'fix', params: { family: null, sizePt: 8 } };
+  const { rules } = mergeExtracted([houseFont, figureSize], guidelines);
+  const font = rules.filter(rule => rule.slot === 'layout.font');
+  assert.equal(font.length, 1);
+  assert.equal(font[0].params.family, 'Lantern Serif');
+  assert.equal(font[0].conflict, undefined, 'no conflict: the figure rule has no slot');
+  const comment = rules.find(rule => rule.statement.startsWith('When illustrations'));
+  assert.equal(comment.slot, null);
+  assert.equal(comment.mode, 'flag');
+  // A sentence that names the body text keeps its slot even when it mentions tables too.
+  const body = { category: 'layout', slot: 'layout.font', statement: 'Set the body text in 12 pt.', quote: 'Set the body text in 12 pt; tables in 10 pt.', mode: 'fix', params: { family: null, sizePt: 12 } };
+  assert.equal(mergeExtracted([body], guidelines).rules[0].slot, 'layout.font');
+});

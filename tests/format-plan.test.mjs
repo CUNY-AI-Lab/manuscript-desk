@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, affiliationSplit, markerForm, planFormatting, settingsFrom } from '../lib/format/plan.js';
+import { DEFAULT_SETTINGS, affiliationSplit, contentsCallsUnnumbered, markerForm, planFormatting, settingsFrom } from '../lib/format/plan.js';
 import { isAffiliation, isLabel, isNames, titleParts } from '../lib/format/titles.js';
 import { compareWords, diffWords } from '../lib/format/words.js';
 import { addRows, alignKeys, compare, keyOf } from '../scripts/format-eval.mjs';
@@ -90,6 +90,19 @@ test('figures are numbered by chapter, an introduction left unnumbered', () => {
   assert.equal(decisions.get(4).figure.placeholder, true);
   assert.equal(decisions.get(6).figure.label, '1.2');
   assert.equal(decisions.get(7).captionLabel, '1.2', 'the text after an image is its caption');
+});
+
+test('an introduction with a title of its own is unnumbered when the contents list calls it Introduction, so the next chapter is chapter 1', () => {
+  const paragraphs = model([['Contents'], ['Introduction: “Why Lanterns: A Short History” 3'], ['Glass and Wick 9'], ['“Why Lanterns: A Short History”'], ['Ada Placeholder'], ['Text.'], ['Glass and Wick'], ['Ben Example'], ['Text.'], ['[FIGURE HERE]']]);
+  const roles = { 0: 'front-matter-heading', 1: 'contents-entry', 2: 'contents-entry', 3: 'title-block', 4: 'title-block', 5: 'body', 6: 'title-block', 7: 'title-block', 8: 'body', 9: 'figure' };
+  const { chapters, decisions } = planFormatting(paragraphs, roles, settingsFrom(sheetWith([RULES.markers])));
+  assert.deepEqual(chapters.map(chapter => chapter.number), [null, 1]);
+  assert.equal(decisions.get(9).figure.label, '1.1', 'the first numbered chapter\'s figure is 1.1, not 2.1');
+  // Without the contents line, the same opening is counted as chapter 1, as before.
+  const bare = planFormatting(paragraphs, { ...roles, 1: 'body' }, DEFAULT_SETTINGS);
+  assert.deepEqual(bare.chapters.map(chapter => chapter.number), [1, 2]);
+  assert.equal(contentsCallsUnnumbered('Glass and Wick', ['Introduction: “Why Lanterns: A Short History” 3', 'Glass and Wick 9']), false);
+  assert.equal(contentsCallsUnnumbered('Why', ['Introduction: Why 3']), false, 'too short a title to compare');
 });
 
 test('typed heading numbers are seen chapter by chapter', () => {
