@@ -157,7 +157,7 @@ test('every rule ends as done, a default, not applicable, the copyeditor\'s, a t
 test('a unit is a short conversation: reading only in the first two turns, then decisions; a rate-limit refusal is waited out', async () => {
   const { bytes, roles } = volume();
   const { paragraphs } = readDocx(bytes);
-  const unit = { kind: 'findings', name: 'chapter-1', items: ['F1'], text: 'F1 (typo) at paragraph 23: tehm' };
+  const unit = { kind: 'findings', name: 'chapter-1', items: ['F1'], text: 'F1 (typo) at paragraph 23: tehm', range: [17, 30] };
   const seen = [];
   let refusedOnce = false;
   const call = async ({ kind, reading, messages }) => {
@@ -171,6 +171,12 @@ test('a unit is a short conversation: reading only in the first two turns, then 
   const pauses = [];
   const { record, stats } = await runUnit({ unit, paragraphs, roleOf: roleOf(roles), call, wait: async ms => { pauses.push(ms); } });
   assert.deepEqual(seen.map(entry => entry.reading), [true, true, true, false, false]);
+  // The reading stayed inside the unit's chapter: paragraphs 1 to 3 (asked for after reading closed) and 13 were never sent.
+  const { createSession } = await import('../lib/decide/loop.js');
+  const { handlers } = createSession({ unit, paragraphs, roleOf: roleOf(roles) });
+  assert.match(handlers.read_paragraphs({ from: 0, to: 16 }), /^\(no paragraphs with text there/u);
+  assert.match(handlers.read_paragraphs({ from: 22, to: 23 }), /\[23\] \(body\) Bells ring tehm/u);
+  assert.doesNotMatch(handlers.find_text({ text: 'Lanterns' }), /Lanterns/u, 'find_text stays inside the chapter too');
   assert.equal(pauses.length, 1);
   assert.equal(stats.readRefused, 1, 'reading after the second turn is refused');
   assert.equal(stats.stopped, 'finished');
